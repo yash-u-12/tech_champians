@@ -136,7 +136,7 @@ export default function DoctorInterface({ doctorId, userId }) {
       });
 
       if (response.ok) {
-        alert('Prescription submitted successfully! Forwarded to Pharmacy.');
+        alert('Prescription submitted and consultation completed! Patient can now collect from Pharmacy.');
         setPrescription({ medications: [], instructions: '', followUp: '' });
         setSelectedPatient(null);
         fetchMyPatients();

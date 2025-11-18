@@ -16,6 +16,8 @@ export async function GET(request) {
     // ALWAYS check database first (primary source)
     try {
       const { userId } = await auth();
+      console.log('🔍 Patient API - Checking database for userId:', userId, 'patientId:', patientId);
+      
       const user = await db.user.findUnique({
         where: { clerkUserId: userId || patientId },
         include: {
@@ -31,15 +33,26 @@ export async function GET(request) {
         }
       });
 
+      console.log('👤 User found:', !!user, 'Has medical_history:', !!user?.medical_history);
+
       if (user?.medical_history) {
         const visits = JSON.parse(user.medical_history);
         const currentAppointmentId = visits.currentAppointmentId;
         
+        console.log('📋 Visits data:', { 
+          currentAppointmentId, 
+          totalVisits: visits.visits?.length || 0,
+          visitStatuses: visits.visits?.map(v => ({ id: v.appointmentId, status: v.status }))
+        });
+        
         if (currentAppointmentId && visits.visits) {
           const currentVisit = visits.visits.find(v => v.appointmentId === currentAppointmentId && v.status !== 'completed');
+          
+          console.log('🎯 Current visit found:', !!currentVisit);
+          
           if (currentVisit) {
             // Return current active visit from DATABASE
-            return NextResponse.json({
+            const responseData = {
               success: true,
               patient: {
                 patientId: userId || patientId,
@@ -68,11 +81,17 @@ export async function GET(request) {
                 invoice: currentVisit.invoice
               },
               history: visits.visits || []
-            });
+            };
+            console.log('✅ Returning active visit from database, has prescription:', !!currentVisit.prescription);
+            if (currentVisit.prescription) {
+              console.log('💊 Prescription data:', currentVisit.prescription);
+            }
+            return NextResponse.json(responseData);
           }
         }
         
         // No active visit but has history
+        console.log('⚠️ No active visit, but has history');
         return NextResponse.json({ 
           success: true,
           noActiveAppointment: true,

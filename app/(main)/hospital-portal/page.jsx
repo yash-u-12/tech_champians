@@ -21,12 +21,14 @@ export default function HospitalPortalPage() {
   const [prefill, setPrefill] = useState({ name: '', reason: '' });
   const { user } = useUser();
 
-  // Generate a demo user ID if not set
+  // Use actual Clerk user ID or generate demo ID
   useEffect(() => {
-    if (!userId) {
-      setUserId(`USER${Date.now()}`);
+    if (user?.id) {
+      setUserId(user.id); // Use real Clerk user ID
+    } else if (!userId) {
+      setUserId(`USER${Date.now()}`); // Fallback to demo ID
     }
-  }, []);
+  }, [user]);
 
   // Preselect role from query string (e.g., ?role=patient)
   useEffect(() => {

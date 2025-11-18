@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getOrchestrator } from '@/hospital-automation/workflows/orchestrator';
 import MessageBus from '@/hospital-automation/agents/message-bus.js';
+import { db } from '@/lib/prisma';
 
 // POST - Submit prescription from doctor
 export async function POST(request) {
@@ -68,6 +69,32 @@ export async function POST(request) {
       appointment.prescriptionInstructions = instructions;
       appointment.followUp = followUp;
       appointment.prescriptionReady = true;
+    }
+
+    // Store prescription in DATABASE (primary storage)
+    console.log('💊 Saving prescription to database for patient:', patientId);
+    try {
+      const user = await db.user.findUnique({ where: { clerkUserId: patientId } });
+      if (user?.medical_history) {
+        const visits = JSON.parse(user.medical_history);
+        const visitIndex = visits.visits?.findIndex(v => v.appointmentId === appointmentId);
+        if (visitIndex >= 0) {
+          visits.visits[visitIndex].prescription = prescription;
+          visits.visits[visitIndex].prescriptionInstructions = instructions;
+          visits.visits[visitIndex].followUp = followUp;
+          visits.visits[visitIndex].status = 'completed'; // Mark as completed when prescription submitted
+          visits.visits[visitIndex].completedAt = new Date().toISOString();
+          visits.currentAppointmentId = null; // Clear current appointment
+          
+          await db.user.update({
+            where: { clerkUserId: patientId },
+            data: { medical_history: JSON.stringify(visits) }
+          });
+          console.log('✅ Prescription saved to database and visit marked complete');
+        }
+      }
+    } catch (dbError) {
+      console.error('❌ Failed to save prescription to database:', dbError);
     }
 
     // Store prescription in global orchestrator state

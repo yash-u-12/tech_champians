@@ -40,8 +40,12 @@ export async function POST(request) {
 
     // Store visit data in database - PRIMARY STORAGE
     const appointmentId = `apt-${Date.now()}`;
+    console.log('💾 Saving check-in to database for patient:', patientId, 'appointmentId:', appointmentId);
+    
     try {
       const user = await db.user.findUnique({ where: { clerkUserId: patientId } });
+      console.log('👤 User found in DB:', !!user);
+      
       const visitData = {
         appointmentId,
         name,
@@ -53,6 +57,8 @@ export async function POST(request) {
         roomId: 'Waiting area'
       };
       
+      console.log('📝 Visit data to save:', visitData);
+      
       const existingHistory = user?.medical_history || '{"visits":[]}';
       let visits;
       try {
@@ -63,6 +69,8 @@ export async function POST(request) {
       if (!visits.visits) visits.visits = [];
       visits.visits.push(visitData);
       visits.currentAppointmentId = appointmentId;
+      
+      console.log('💾 Upserting user with medical_history, total visits:', visits.visits.length);
       
       await db.user.upsert({
         where: { clerkUserId: patientId },
@@ -78,9 +86,10 @@ export async function POST(request) {
         }
       });
       
-      console.log('✅ Check-in saved to database:', appointmentId);
+      console.log('✅ Check-in saved to database successfully:', appointmentId);
     } catch (dbError) {
       console.error('❌ DB storage failed:', dbError.message);
+      console.error('Full error:', dbError);
       throw dbError;
     }
 

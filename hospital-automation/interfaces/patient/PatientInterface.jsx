@@ -70,31 +70,37 @@ export default function PatientInterface({ userId, defaultName = '', defaultReas
       const response = await fetch(`/api/hospital-automation/patient?patientId=${userId}`);
       if (response.ok) {
         const data = await response.json();
-        console.log('Patient API Response:', data);
-        if (data.success) {
-          console.log('Setting patient data:', data.patient);
+        console.log('🔍 Patient API Response:', data);
+        if (data.success && data.patient) {
+          console.log('✅ Setting patient data:', data.patient);
           setPatientData(data.patient);
           setAppointmentStatus(data.status);
           if (data.history) {
+            console.log('📋 Setting visit history:', data.history.length, 'visits');
             setVisitHistory(data.history);
           }
         } else if (data.noActiveAppointment) {
           // No active appointment - clear current data but keep history
-          console.log('No active appointment');
+          console.log('⚠️ No active appointment, clearing patient data');
           setPatientData(null);
           setAppointmentStatus(null);
           if (data.history) {
+            console.log('📋 Keeping visit history:', data.history.length, 'visits');
             setVisitHistory(data.history);
           }
+        } else {
+          console.log('❌ No success flag or patient data');
+          setPatientData(null);
+          setAppointmentStatus(null);
         }
       } else {
         // Clear data on error
-        console.log('API error:', response.status);
+        console.log('❌ API error:', response.status);
         setPatientData(null);
         setAppointmentStatus(null);
       }
     } catch (error) {
-      console.error('Error fetching patient status:', error);
+      console.error('❌ Error fetching patient status:', error);
       setPatientData(null);
       setAppointmentStatus(null);
     } finally {
