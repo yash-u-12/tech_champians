@@ -1,0 +1,26 @@
+{
+  "name": "hospital-automation",
+  "version": "1.0.0",
+  "description": "AI-powered multi-agent hospital automation system",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node test/test-workflow.js",
+    "test:agents": "node test/test-agents.js"
+  },
+  "keywords": [
+    "hospital",
+    "automation",
+    "ai-agents",
+    "healthcare",
+    "workflow"
+  ],
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

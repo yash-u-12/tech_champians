@@ -30,6 +30,17 @@ A comprehensive telemedicine platform that connects patients with verified docto
 - **Analytics**: Platform usage statistics and revenue tracking
 - **Content Management**: Manage specialities, pricing, and platform content
 
+### 🤖 Hospital Automation System (NEW!)
+
+- **AI-Powered Multi-Agent System**: Automated offline hospital operations
+- **10 Intelligent Agents**: Reception, Triage, Scheduling, Lab, Pharmacy, Billing, and more
+- **Automated Workflows**: Patient admission, emergency response, discharge processes
+- **Real-time Coordination**: Agents communicate to optimize hospital operations
+- **Resource Management**: Intelligent allocation of doctors, rooms, and equipment
+- **Predictive Analytics**: AI-driven decision making for patient care
+- **Comprehensive Dashboard**: Monitor all hospital operations in real-time
+- **Inventory Management**: Automated tracking and reordering of medical supplies
+
 ## 🛠️ Tech Stack
 
 ### Frontend
@@ -135,6 +146,51 @@ stripe listen --forward-to localhost:3000/api/webhook/stripe
 
 Visit [http://localhost:3000](http://localhost:3000) to see the application.
 
+## 🤖 Hospital Automation System Setup
+
+The Hospital Automation System is a separate AI-powered module for managing offline hospital operations.
+
+1. **Navigate to hospital-automation directory**
+
+```bash
+cd hospital-automation
+```
+
+2. **Run setup script**
+
+```bash
+.\setup.ps1
+```
+
+Or manually:
+
+```bash
+npm install
+cp .env.example .env.local
+# Edit .env.local and add your GEMINI_API_KEY
+```
+
+3. **Start the automation system**
+
+```bash
+npm start
+```
+
+4. **Access the dashboard**
+
+Visit [http://localhost:3001/hospital-automation/dashboard](http://localhost:3001/hospital-automation/dashboard)
+
+**Features:**
+- 10 AI agents working together
+- Automated patient admission workflows
+- Emergency response coordination
+- Real-time resource management
+- Pharmacy inventory tracking
+- Lab test processing
+- Automated billing
+
+For detailed documentation, see [hospital-automation/README.md](hospital-automation/README.md) and [hospital-automation/USAGE_GUIDE.md](hospital-automation/USAGE_GUIDE.md)
+
 ## 🏗️ Project Structure
 
 ```
@@ -147,7 +203,10 @@ medsync-ai/
 │   │   ├── doctors/      # Patient doctor discovery
 │   │   ├── onboarding/   # User onboarding
 │   │   ├── pricing/      # Pricing plans
-│   │   └── video-call/   # Video consultation
+│   │   ├── video-call/   # Video consultation
+│   │   └── hospital-automation/ # Hospital automation dashboard
+│   ├── api/
+│   │   └── hospital-automation/ # Automation API endpoints
 │   ├── globals.css       # Global styles
 │   ├── layout.js         # Root layout
 │   └── page.js           # Landing page
@@ -156,6 +215,22 @@ medsync-ai/
 │   ├── appointment-card.jsx
 │   ├── header.jsx
 │   └── ...
+├── hospital-automation/  # 🤖 AI Agent System (NEW!)
+│   ├── agents/          # Individual AI agents
+│   │   ├── base-agent.js
+│   │   ├── reception-agent.js
+│   │   ├── triage-agent.js
+│   │   ├── scheduling-agent.js
+│   │   ├── pharmacy-agent.js
+│   │   ├── lab-agent.js
+│   │   ├── billing-agent.js
+│   │   └── message-bus.js
+│   ├── workflows/       # Orchestration and workflows
+│   │   └── orchestrator.js
+│   ├── test/           # Test suites
+│   ├── README.md       # System documentation
+│   ├── USAGE_GUIDE.md  # Detailed usage guide
+│   └── index.js        # Main entry point
 ├── lib/
 │   ├── data.js           # Static data and constants
 │   ├── schema.js         # Database schemas

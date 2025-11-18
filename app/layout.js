@@ -1,10 +1,9 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { ClerkProvider } from "@clerk/nextjs";
 import { Toaster } from "sonner";
 import Header from "@/components/header";
-import { dark } from "@clerk/themes";
 import { ThemeProvider } from "@/components/theme-provider";
+import ConditionalClerkProvider from "@/components/conditional-clerk-provider";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -15,16 +14,12 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <ClerkProvider
-      appearance={{
-        baseTheme: dark,
-      }}
-    >
-      <html lang="en" suppressHydrationWarning>
-        <head>
-          <link rel="icon" href="/logo-single.png" sizes="any" />
-        </head>
-        <body className={`${inter.className}`}>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <link rel="icon" href="/logo-single.png" sizes="any" />
+      </head>
+      <body className={`${inter.className}`}>
+        <ConditionalClerkProvider>
           <ThemeProvider
             attribute="class"
             defaultTheme="dark"
@@ -41,8 +36,8 @@ export default function RootLayout({ children }) {
               </div>
             </footer>
           </ThemeProvider>
-        </body>
-      </html>
-    </ClerkProvider>
+        </ConditionalClerkProvider>
+      </body>
+    </html>
   );
 }

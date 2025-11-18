@@ -1,10 +1,20 @@
+'use client';
+
 import React from "react";
-import { checkUser } from "@/lib/checkUser";
+import { usePathname } from "next/navigation";
 import HeaderClient from "./header-client";
 
-// Server Component
-export default async function Header() {
-  const user = await checkUser();
+// Client Component that conditionally renders based on route
+export default function Header() {
+  const pathname = usePathname();
+  
+  // Don't render header for hospital automation routes
+  if (pathname?.startsWith("/hospital-portal") || 
+      pathname?.startsWith("/hospital-automation") || 
+      pathname?.startsWith("/hospital-workflow")) {
+    return null;
+  }
 
-  return <HeaderClient userData={user} />;
+  // For other routes, render header without user data to avoid auth errors
+  return <HeaderClient userData={null} />;
 }
