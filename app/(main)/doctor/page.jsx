@@ -11,13 +11,23 @@ import { DoctorEarnings } from "./_components/doctor-earnings";
 export default async function DoctorDashboardPage() {
   const user = await getCurrentUser();
 
-  const [appointmentsData, availabilityData, earningsData, payoutsData] =
-    await Promise.all([
-      getDoctorAppointments(),
-      getDoctorAvailability(),
-      getDoctorEarnings(),
-      getDoctorPayouts(),
-    ]);
+  // Fallback for when DB is unavailable
+  let appointmentsData = { appointments: [] };
+  let availabilityData = { slots: [] };
+  let earningsData = { earnings: {} };
+  let payoutsData = { payouts: [] };
+
+  try {
+    [appointmentsData, availabilityData, earningsData, payoutsData] =
+      await Promise.all([
+        getDoctorAppointments().catch(() => ({ appointments: [] })),
+        getDoctorAvailability().catch(() => ({ slots: [] })),
+        getDoctorEarnings().catch(() => ({ earnings: {} })),
+        getDoctorPayouts().catch(() => ({ payouts: [] })),
+      ]);
+  } catch (error) {
+    console.error("Error loading doctor dashboard data:", error);
+  }
 
   if (user?.role !== "DOCTOR") {
     redirect("/onboarding");

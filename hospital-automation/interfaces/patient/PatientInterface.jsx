@@ -22,10 +22,13 @@ import {
   Activity,
   CheckCircle
 } from 'lucide-react';
+import { getPatientAppointments } from '@/actions/patient';
 
-export default function PatientInterface({ userId }) {
+export default function PatientInterface({ userId, defaultName = '', defaultReason = '' }) {
   const [patientData, setPatientData] = useState(null);
   const [appointmentStatus, setAppointmentStatus] = useState(null);
+  const [allAppointments, setAllAppointments] = useState([]);
+  const [visitHistory, setVisitHistory] = useState([]);
   const [checkInForm, setCheckInForm] = useState({
     name: '',
     reason: '',
@@ -36,21 +39,64 @@ export default function PatientInterface({ userId }) {
   useEffect(() => {
     if (userId) {
       fetchPatientStatus();
+      fetchAllAppointments();
       const interval = setInterval(fetchPatientStatus, 5000);
       return () => clearInterval(interval);
     }
   }, [userId]);
+
+  // Prefill form from defaults on first render when not yet checked in
+  useEffect(() => {
+    setCheckInForm((prev) => ({
+      ...prev,
+      name: prev.name || defaultName || '',
+      reason: prev.reason || defaultReason || '',
+    }));
+  }, [defaultName, defaultReason]);
+
+  const fetchAllAppointments = async () => {
+    try {
+      const result = await getPatientAppointments();
+      if (result.appointments) {
+        setAllAppointments(result.appointments);
+      }
+    } catch (error) {
+      console.error('Error fetching appointments:', error);
+    }
+  };
 
   const fetchPatientStatus = async () => {
     try {
       const response = await fetch(`/api/hospital-automation/patient?patientId=${userId}`);
       if (response.ok) {
         const data = await response.json();
-        setPatientData(data.patient);
-        setAppointmentStatus(data.status);
+        console.log('Patient API Response:', data);
+        if (data.success) {
+          console.log('Setting patient data:', data.patient);
+          setPatientData(data.patient);
+          setAppointmentStatus(data.status);
+          if (data.history) {
+            setVisitHistory(data.history);
+          }
+        } else if (data.noActiveAppointment) {
+          // No active appointment - clear current data but keep history
+          console.log('No active appointment');
+          setPatientData(null);
+          setAppointmentStatus(null);
+          if (data.history) {
+            setVisitHistory(data.history);
+          }
+        }
+      } else {
+        // Clear data on error
+        console.log('API error:', response.status);
+        setPatientData(null);
+        setAppointmentStatus(null);
       }
     } catch (error) {
       console.error('Error fetching patient status:', error);
+      setPatientData(null);
+      setAppointmentStatus(null);
     } finally {
       setLoading(false);
     }
@@ -69,10 +115,17 @@ export default function PatientInterface({ userId }) {
         })
       });
 
-      if (response.ok) {
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
         alert('Check-in successful! Please wait for your turn.');
         setCheckInForm({ name: '', reason: '', isEmergency: false });
         fetchPatientStatus();
+      } else if (data.existingAppointment) {
+        alert(data.error || 'You already have an active appointment.');
+        fetchPatientStatus(); // Refresh to show existing appointment
+      } else {
+        alert(data.error || 'Check-in failed. Please try again.');
       }
     } catch (error) {
       console.error('Error checking in:', error);
@@ -229,8 +282,9 @@ export default function PatientInterface({ userId }) {
 
           {/* Main Content Tabs */}
           <Tabs defaultValue="journey" className="space-y-4">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="journey">Journey</TabsTrigger>
+              <TabsTrigger value="appointments">My Appointments</TabsTrigger>
               <TabsTrigger value="details">Details</TabsTrigger>
               <TabsTrigger value="tests">Lab Tests</TabsTrigger>
               <TabsTrigger value="prescription">Prescription</TabsTrigger>
@@ -288,6 +342,240 @@ export default function PatientInterface({ userId }) {
               </Card>
             </TabsContent>
 
+            {/* My Appointments Tab */}
+            <TabsContent value="appointments">
+              <Card>
+                <CardHeader>
+                  <CardTitle>My Appointments & Visit History</CardTitle>
+                  <CardDescription>View your scheduled appointments and walk-in visit history</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {/* Current Active Appointment */}
+                  {patientData && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold mb-3 flex items-center">
+                        <Activity className="h-5 w-5 mr-2 text-green-600" />
+                        Current Visit
+                      </h3>
+                      <Card className="border-2 border-green-500/20 bg-green-50/50">
+                        <CardContent className="p-4">
+                          <div className="flex justify-between items-start mb-3">
+                            <div>
+                              <h4 className="font-semibold text-lg">{patientData.name}</h4>
+                              <p className="text-sm text-muted-foreground">{patientData.reason}</p>
+                            </div>
+                            <Badge variant={appointmentStatus?.status === 'completed' ? 'default' : 'secondary'} className="text-sm">
+                              {appointmentStatus?.status?.replace('_', ' ').toUpperCase() || 'ACTIVE'}
+                            </Badge>
+                          </div>
+                          
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Appointment ID</Label>
+                              <p className="font-mono text-xs">{patientData.appointmentId}</p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Urgency</Label>
+                              <p><Badge variant={patientData.urgency === 'critical' ? 'destructive' : 'outline'}>{patientData.urgency}</Badge></p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Doctor</Label>
+                              <p>{patientData.doctorName}</p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Location</Label>
+                              <p className="flex items-center">
+                                <MapPin className="h-3 w-3 mr-1" />
+                                {patientData.roomId}
+                              </p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Arrival Time</Label>
+                              <p className="flex items-center">
+                                <Clock className="h-3 w-3 mr-1" />
+                                {new Date(patientData.arrivalTime).toLocaleTimeString()}
+                              </p>
+                            </div>
+                            <div>
+                              <Label className="text-xs text-muted-foreground">Wait Time</Label>
+                              <p>{appointmentStatus?.waitTime || 0} minutes</p>
+                            </div>
+                          </div>
+
+                          {/* Progress Indicators */}
+                          <div className="mt-4 pt-3 border-t">
+                            <Label className="text-xs text-muted-foreground mb-2 block">Visit Progress</Label>
+                            <div className="flex gap-2 flex-wrap">
+                              <Badge variant={appointmentStatus?.triageComplete ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.triageComplete ? '✓' : '○'} Triage
+                              </Badge>
+                              <Badge variant={appointmentStatus?.consultationStarted ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.consultationStarted ? '✓' : '○'} Consultation
+                              </Badge>
+                              <Badge variant={appointmentStatus?.labTestsComplete ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.labTestsComplete ? '✓' : '○'} Lab Tests
+                              </Badge>
+                              <Badge variant={appointmentStatus?.prescriptionReady ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.prescriptionReady ? '✓' : '○'} Prescription
+                              </Badge>
+                              <Badge variant={appointmentStatus?.medicationsCollected ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.medicationsCollected ? '✓' : '○'} Pharmacy
+                              </Badge>
+                              <Badge variant={appointmentStatus?.billingComplete ? 'default' : 'outline'} className="text-xs">
+                                {appointmentStatus?.billingComplete ? '✓' : '○'} Billing
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    </div>
+                  )}
+
+                  {/* Walk-in Visit History */}
+                  {visitHistory.length > 0 && (
+                    <div className="mb-6">
+                      <h3 className="text-lg font-semibold mb-3 flex items-center">
+                        <Activity className="h-5 w-5 mr-2" />
+                        Walk-in Visits
+                      </h3>
+                      <div className="space-y-4">
+                        {visitHistory.slice().reverse().map((visit, idx) => (
+                          <div key={visit.appointmentId || idx} className="p-4 border rounded-lg bg-muted/30">
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <h4 className="font-semibold">{visit.name}</h4>
+                                <p className="text-sm text-muted-foreground">{visit.reason}</p>
+                              </div>
+                              <Badge variant={visit.status === 'completed' ? 'default' : visit.status === 'in_consultation' ? 'secondary' : 'outline'}>
+                                {visit.status?.replace('_', ' ')}
+                              </Badge>
+                            </div>
+                            <div className="text-sm space-y-1">
+                              <p className="flex items-center">
+                                <Calendar className="h-4 w-4 mr-2" />
+                                {new Date(visit.arrivalTime).toLocaleDateString()}
+                              </p>
+                              <p className="flex items-center">
+                                <Clock className="h-4 w-4 mr-2" />
+                                {new Date(visit.arrivalTime).toLocaleTimeString()}
+                              </p>
+                              {visit.doctorName && (
+                                <p className="flex items-center">
+                                  <User className="h-4 w-4 mr-2" />
+                                  {visit.doctorName}
+                                </p>
+                              )}
+                              {visit.roomId && (
+                                <p className="flex items-center">
+                                  <MapPin className="h-4 w-4 mr-2" />
+                                  {visit.roomId}
+                                </p>
+                              )}
+                              {visit.prescription && (
+                                <p className="text-xs text-green-600 mt-2 flex items-center">
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  Prescription issued
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Scheduled Appointments */}
+                  {allAppointments.length > 0 && (
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3 flex items-center">
+                        <Calendar className="h-5 w-5 mr-2" />
+                        Scheduled Appointments
+                      </h3>
+                      <div className="space-y-4">
+                        {allAppointments.map((appointment) => (
+                        <Card key={appointment.id} className="overflow-hidden">
+                          <CardContent className="p-4">
+                            <div className="flex justify-between items-start mb-3">
+                              <div className="flex items-center gap-3">
+                                {appointment.doctor.imageUrl && (
+                                  <img 
+                                    src={appointment.doctor.imageUrl} 
+                                    alt={appointment.doctor.name}
+                                    className="w-12 h-12 rounded-full object-cover"
+                                  />
+                                )}
+                                <div>
+                                  <h3 className="font-semibold text-lg">Dr. {appointment.doctor.name}</h3>
+                                  <p className="text-sm text-muted-foreground">{appointment.doctor.specialty}</p>
+                                </div>
+                              </div>
+                              <Badge variant={
+                                appointment.status === 'COMPLETED' ? 'default' :
+                                appointment.status === 'SCHEDULED' ? 'secondary' :
+                                appointment.status === 'CANCELLED' ? 'destructive' : 'outline'
+                              }>
+                                {appointment.status}
+                              </Badge>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div className="flex items-center gap-2">
+                                <Calendar className="h-4 w-4 text-muted-foreground" />
+                                <span>{new Date(appointment.startTime).toLocaleDateString()}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Clock className="h-4 w-4 text-muted-foreground" />
+                                <span>{new Date(appointment.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            </div>
+
+                            {appointment.patientDescription && (
+                              <div className="mt-3 pt-3 border-t">
+                                <p className="text-sm text-muted-foreground">
+                                  <strong>Reason:</strong> {appointment.patientDescription}
+                                </p>
+                              </div>
+                            )}
+
+                            {appointment.doctorNotes && (
+                              <div className="mt-2">
+                                <p className="text-sm text-muted-foreground">
+                                  <strong>Notes:</strong> {appointment.doctorNotes}
+                                </p>
+                              </div>
+                            )}
+
+                            {appointment.meetingLink && appointment.status === 'SCHEDULED' && (
+                              <div className="mt-3">
+                                <Button 
+                                  onClick={() => window.open(appointment.meetingLink, '_blank')}
+                                  className="w-full"
+                                  variant="outline"
+                                >
+                                  Join Video Call
+                                </Button>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {allAppointments.length === 0 && visitHistory.length === 0 && (
+                    <div className="text-center py-8">
+                      <Calendar className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+                      <p className="text-muted-foreground">No appointments or visits found</p>
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Check in for a walk-in visit or book an appointment with a doctor
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
             {/* Details Tab */}
             <TabsContent value="details">
               <Card>
@@ -297,26 +585,44 @@ export default function PatientInterface({ userId }) {
                 <CardContent className="space-y-4">
                   <div>
                     <Label>Patient Name</Label>
-                    <p className="text-lg font-medium">{patientData.name}</p>
+                    <p className="text-lg font-medium">{patientData?.name || 'Not available'}</p>
+                  </div>
+                  <div>
+                    <Label>Patient ID</Label>
+                    <p className="text-sm font-mono">{patientData?.patientId || userId}</p>
                   </div>
                   <div>
                     <Label>Chief Complaint</Label>
-                    <p className="text-sm">{patientData.reason}</p>
+                    <p className="text-sm">{patientData?.reason || 'Not specified'}</p>
                   </div>
                   <div>
                     <Label>Assigned Doctor</Label>
-                    <p className="text-sm">{patientData.doctorName || 'Not assigned yet'}</p>
+                    <p className="text-sm">{patientData?.doctorName || 'Not assigned yet'}</p>
                   </div>
                   <div>
                     <Label>Room / Location</Label>
                     <p className="text-sm flex items-center">
                       <MapPin className="h-4 w-4 mr-2" />
-                      {patientData.roomId || 'Waiting area'}
+                      {patientData?.roomId || 'Waiting area'}
                     </p>
                   </div>
                   <div>
                     <Label>Appointment ID</Label>
-                    <p className="text-sm font-mono">{patientData.appointmentId || 'Pending'}</p>
+                    <p className="text-sm font-mono">{patientData?.appointmentId || 'Pending'}</p>
+                  </div>
+                  <div>
+                    <Label>Urgency Level</Label>
+                    <Badge variant={patientData?.urgency === 'critical' ? 'destructive' : 'default'}>
+                      {patientData?.urgency || 'Normal'}
+                    </Badge>
+                  </div>
+                  <div>
+                    <Label>Arrival Time</Label>
+                    <p className="text-sm">
+                      {patientData?.arrivalTime 
+                        ? new Date(patientData.arrivalTime).toLocaleString() 
+                        : 'Not available'}
+                    </p>
                   </div>
                 </CardContent>
               </Card>
@@ -383,11 +689,25 @@ export default function PatientInterface({ userId }) {
                         </div>
                       ))}
                       
-                      {appointmentStatus.prescriptionReady && (
+                      {appointmentStatus.prescriptionReady && !appointmentStatus.medicationsCollected && (
                         <Alert>
                           <CheckCircle className="h-4 w-4" />
                           <AlertDescription>
                             Your prescription is ready! Please collect your medications from the pharmacy counter.
+                          </AlertDescription>
+                        </Alert>
+                      )}
+                      
+                      {appointmentStatus.medicationsCollected && (
+                        <Alert className="bg-green-50 border-green-200">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <AlertDescription className="text-green-800">
+                            ✓ Medications collected from pharmacy
+                            {appointmentStatus.collectionTime && (
+                              <span className="block text-xs mt-1">
+                                Collected at: {new Date(appointmentStatus.collectionTime).toLocaleString()}
+                              </span>
+                            )}
                           </AlertDescription>
                         </Alert>
                       )}

@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/lib/prisma";
-import { auth } from "@clerk/nextjs/server";
+import { auth, clerkClient } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
 
 export async function setUserRole(formData) {
@@ -11,15 +11,19 @@ export async function setUserRole(formData) {
     throw new Error("Unauthorized");
   }
 
-  const user = await db.user.findUnique({
-    where: { clerkUserId: userId },
-  });
-
-  if (!user) throw new Error("User Not Found in Database");
+  // DB may be unavailable in demo; proceed with Clerk metadata regardless
+  let user = null;
+  try {
+    user = await db.user.findUnique({
+      where: { clerkUserId: userId },
+    });
+  } catch (e) {
+    user = null;
+  }
 
   const role = formData.get("role");
 
-  if (!role || !["PATIENT", "DOCTOR"].includes(role)) {
+  if (!role || !["PATIENT", "DOCTOR", "PHARMACY"].includes(role)) {
     throw new Error("Invalid Role Selection");
   }
 
@@ -51,30 +55,36 @@ export async function setUserRole(formData) {
         throw new Error("Age, Gender, Address, and Food Habit are Required");
       }
 
-      await db.user.update({
-        where: {
-          clerkUserId: userId,
-        },
-        data: {
-          role: "PATIENT",
-          age,
-          gender,
-          address,
-          allergies,
-          food_habit,
-          bp_sys,
-          bp_dia,
-          sugar_fasting,
-          sugar_pp,
-          surgery,
-          transfusion,
-          accident,
-          medical_history,
-        },
+      // Try DB update (optional in demo)
+      try {
+        await db.user.update({
+          where: { clerkUserId: userId },
+          data: {
+            role: "PATIENT",
+            age,
+            gender,
+            address,
+            allergies,
+            food_habit,
+            bp_sys,
+            bp_dia,
+            sugar_fasting,
+            sugar_pp,
+            surgery,
+            transfusion,
+            accident,
+            medical_history,
+          },
+        });
+      } catch (_) {}
+
+      // Persist role in Clerk public metadata for gating
+      await clerkClient.users.updateUser(userId, {
+        publicMetadata: { role: "PATIENT" },
       });
 
       revalidatePath("/");
-      return { success: true, redirect: "/doctors" };
+      return { success: true, redirect: "/hospital-portal?role=patient" };
     }
 
     if (role === "DOCTOR") {
@@ -87,22 +97,43 @@ export async function setUserRole(formData) {
         throw new Error("All Fields are Required");
       }
 
-      await db.user.update({
-        where: {
-          clerkUserId: userId,
-        },
-        data: {
-          role: "DOCTOR",
-          specialty,
-          experience,
-          credentialUrl,
-          description,
-          verificationStatus: "PENDING",
-        },
+      try {
+        await db.user.update({
+          where: { clerkUserId: userId },
+          data: {
+            role: "DOCTOR",
+            specialty,
+            experience,
+            credentialUrl,
+            description,
+            verificationStatus: "PENDING",
+          },
+        });
+      } catch (_) {}
+
+      await clerkClient.users.updateUser(userId, {
+        publicMetadata: { role: "DOCTOR" },
       });
 
       revalidatePath("/");
-      return { success: true, redirect: "/doctor/verification" };
+      return { success: true, redirect: "/hospital-portal?role=doctor" };
+    }
+    if (role === "PHARMACY") {
+      try {
+        await db.user.update({
+          where: { clerkUserId: userId },
+          data: {
+            role: "PHARMACY",
+          },
+        });
+      } catch (_) {}
+
+      await clerkClient.users.updateUser(userId, {
+        publicMetadata: { role: "PHARMACY" },
+      });
+
+      revalidatePath("/");
+      return { success: true, redirect: "/hospital-portal?role=pharmacy" };
     }
   } catch (error) {
     console.error("Failed to Set User Role:", error);

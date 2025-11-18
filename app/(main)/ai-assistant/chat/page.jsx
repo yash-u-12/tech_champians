@@ -10,10 +10,7 @@ export const metadata = {
 
 export default async function ChatPage() {
   const user = await checkUser();
-
-  if (!user || user.role !== "PATIENT") {
-    redirect("/");
-  }
+  if (!user) redirect("/sign-in");
 
   return <ChatUI />;
 }

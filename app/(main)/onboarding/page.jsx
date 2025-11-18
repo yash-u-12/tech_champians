@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -34,6 +35,7 @@ const filter = new Filter();
 export default function OnboardingPage() {
   const [step, setStep] = useState("choose-role");
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const { loading, data, fn: submitUserRole } = useFetch(setUserRole);
 
@@ -87,6 +89,19 @@ export default function OnboardingPage() {
       router.push(data.redirect);
     }
   }, [data]);
+
+  // Preselect step based on selectedRole query (from SignUp)
+  useEffect(() => {
+    const selected = (searchParams?.get("selectedRole") || "").toLowerCase();
+    if (selected === "patient") setStep("patient-form");
+    else if (selected === "doctor") setStep("doctor-form");
+    else if (selected === "pharmacy") {
+      // Auto-complete role selection for pharmacy (no extra form fields now)
+      const formData = new FormData();
+      formData.append("role", "PHARMACY");
+      submitUserRole(formData);
+    }
+  }, [searchParams]);
 
   const onDoctorSubmit = async (data) => {
     if (loading) return;
@@ -177,6 +192,42 @@ export default function OnboardingPage() {
               disabled={loading}
             >
               Continue as Doctor
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Pharmacy quick-join card */}
+        <Card
+          className="border-emerald-900/20 hover:border-emerald-700/40 cursor-pointer transition-all md:col-span-2"
+          onClick={async () => {
+            if (loading) return;
+            const fd = new FormData();
+            fd.append("role", "PHARMACY");
+            await submitUserRole(fd);
+          }}
+        >
+          <CardContent className="pt-6 pb-6 flex flex-col items-center text-center">
+            <div className="p-4 bg-emerald-900/20 rounded-full mb-4">
+              <Stethoscope className="h-8 w-8 text-emerald-400" />
+            </div>
+            <CardTitle className="text-xl font-semibold text-white mb-2">
+              Join as Pharmacy
+            </CardTitle>
+            <CardDescription className="mb-4">
+              Process Prescriptions and Manage Dispensing
+            </CardDescription>
+            <Button
+              className="w-full mt-2 bg-emerald-600 hover:bg-emerald-700"
+              disabled={loading}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                "Continue as Pharmacy"
+              )}
             </Button>
           </CardContent>
         </Card>

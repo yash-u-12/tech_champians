@@ -20,11 +20,15 @@ import {
   Download,
   Pill,
   TestTube,
-  Activity
+  Activity,
+  Video
 } from 'lucide-react';
+import { getDoctorAppointments, cancelAppointment } from '@/actions/doctor';
 
-export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
+export default function DoctorInterface({ doctorId, userId }) {
+  const [scope, setScope] = useState(doctorId || 'all');
   const [patients, setPatients] = useState([]);
+  const [scheduledAppointments, setScheduledAppointments] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [prescription, setPrescription] = useState({
     medications: [],
@@ -35,21 +39,59 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
 
   useEffect(() => {
     fetchMyPatients();
-    const interval = setInterval(fetchMyPatients, 10000);
+    fetchScheduledAppointments();
+    const interval = setInterval(() => {
+      fetchMyPatients();
+      fetchScheduledAppointments();
+    }, 10000);
     return () => clearInterval(interval);
-  }, [doctorId]);
+  }, [scope, userId]);
 
   const fetchMyPatients = async () => {
     try {
-      const response = await fetch(`/api/hospital-automation/doctor?doctorId=${doctorId}`);
+      const url =
+        scope === 'all'
+          ? `/api/hospital-automation/doctor?all=true&includeDb=true`
+          : `/api/hospital-automation/doctor?doctorId=${encodeURIComponent(scope)}&includeDb=true`;
+      const response = await fetch(url);
       if (response.ok) {
         const data = await response.json();
+        console.log('Doctor API Response:', data);
+        console.log('Patients found:', data.patients?.length || 0);
         setPatients(data.patients || []);
+      } else {
+        console.error('Fetch failed:', response.status, response.statusText);
       }
     } catch (error) {
       console.error('Error fetching patients:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchScheduledAppointments = async () => {
+    if (!userId) return;
+    try {
+      const result = await getDoctorAppointments();
+      if (result.appointments) {
+        setScheduledAppointments(result.appointments);
+      }
+    } catch (error) {
+      console.error('Error fetching scheduled appointments:', error);
+      // If doctor not found in DB, just set empty array
+      setScheduledAppointments([]);
+    }
+  };
+
+  const handleCancelAppointment = async (appointmentId) => {
+    try {
+      const formData = new FormData();
+      formData.append('appointmentId', appointmentId);
+      await cancelAppointment(formData);
+      fetchScheduledAppointments();
+    } catch (error) {
+      console.error('Error cancelling appointment:', error);
+      alert(error.message);
     }
   };
 
@@ -113,6 +155,26 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          appointmentId: selectedPatient.appointmentId,
+          patientId: selectedPatient.patientId
+        })
+      });
+
+      if (response.ok) {
+        alert('Consultation completed successfully!');
+        setSelectedPatient(null);
+        fetchMyPatients();
+        return;
+      }
+    } catch (error) {
+      console.error('Error completing consultation:', error);
+    }
+
+    try {
+      const response = await fetch('/api/hospital-automation/doctor/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           patientId: selectedPatient.patientId,
           appointmentId: selectedPatient.appointmentId,
           doctorId,
@@ -150,10 +212,15 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
             Manage your patients and consultations
           </p>
         </div>
-        <Badge variant="default" className="text-lg px-4 py-2">
-          <User className="h-4 w-4 mr-2" />
-          {doctorId}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <Badge variant="default" className="text-lg px-4 py-2">
+            <User className="h-4 w-4 mr-2" />
+            {scope === 'all' ? 'All Doctors' : scope}
+          </Badge>
+          <Button size="sm" variant="outline" onClick={() => setScope(scope === 'all' ? 'doc-general-1' : 'all')}>
+            {scope === 'all' ? 'Show General' : 'Show All'}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -171,7 +238,7 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
             ) : (
               patients.map((patient) => (
                 <div
-                  key={patient.patientId}
+                  key={patient.appointmentId || `${patient.patientId}-${Math.random()}`}
                   onClick={() => setSelectedPatient(patient)}
                   className={`p-4 border rounded-lg cursor-pointer transition-colors ${
                     selectedPatient?.patientId === patient.patientId
@@ -180,8 +247,15 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
                   }`}
                 >
                   <div className="flex justify-between items-start mb-2">
-                    <h3 className="font-semibold">{patient.name}</h3>
-                    <Badge variant={patient.priority === 'critical' ? 'destructive' : 'default'}>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold">{patient.name}</h3>
+                      {patient.source === 'db_appointment' && (
+                        <Badge variant="outline" className="text-xs bg-blue-900/20 border-blue-700/30">
+                          Booked
+                        </Badge>
+                      )}
+                    </div>
+                    <Badge variant={patient.priority === 'critical' ? 'destructive' : patient.priority === 'scheduled' ? 'secondary' : 'default'}>
                       {patient.priority}
                     </Badge>
                   </div>
@@ -190,7 +264,10 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
                   </p>
                   <div className="flex items-center text-xs text-muted-foreground">
                     <Clock className="h-3 w-3 mr-1" />
-                    {patient.roomId} • Appointment: {patient.appointmentId?.slice(-4)}
+                    {patient.scheduledTime 
+                      ? `Scheduled: ${new Date(patient.scheduledTime).toLocaleString()}`
+                      : `${patient.roomId} • Appointment: ${patient.appointmentId?.slice(-4)}`
+                    }
                   </div>
                 </div>
               ))
@@ -224,10 +301,11 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
               </CardHeader>
               <CardContent>
                 <Tabs defaultValue="details" className="space-y-4">
-                  <TabsList className="grid w-full grid-cols-3">
+                  <TabsList className="grid w-full grid-cols-4">
                     <TabsTrigger value="details">Patient Details</TabsTrigger>
                     <TabsTrigger value="tests">Lab Results</TabsTrigger>
                     <TabsTrigger value="prescription">Prescription</TabsTrigger>
+                    <TabsTrigger value="scheduled">Scheduled</TabsTrigger>
                   </TabsList>
 
                   {/* Patient Details Tab */}
@@ -429,6 +507,80 @@ export default function DoctorInterface({ doctorId = 'doc-general-1' }) {
                         </div>
                       </CardContent>
                     </Card>
+                  </TabsContent>
+
+                  {/* Scheduled Appointments Tab */}
+                  <TabsContent value="scheduled" className="space-y-4">
+                    {scheduledAppointments.length === 0 ? (
+                      <Card>
+                        <CardContent className="py-8 text-center text-muted-foreground">
+                          No scheduled appointments
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-4">
+                        {scheduledAppointments.map((apt) => {
+                          const aptDate = new Date(apt.appointmentDate);
+                          const now = new Date();
+                          const canJoin = aptDate <= now && aptDate > new Date(now - 60 * 60 * 1000); // Within 1 hour window
+                          
+                          return (
+                            <Card key={apt.id}>
+                              <CardHeader>
+                                <div className="flex justify-between items-start">
+                                  <div>
+                                    <CardTitle className="text-lg">{apt.patient.fullName}</CardTitle>
+                                    <p className="text-sm text-muted-foreground">
+                                      {apt.specialty} • {aptDate.toLocaleDateString()} at {aptDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </p>
+                                  </div>
+                                  <Badge variant={apt.status === 'COMPLETED' ? 'default' : apt.status === 'CANCELLED' ? 'destructive' : 'secondary'}>
+                                    {apt.status}
+                                  </Badge>
+                                </div>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="space-y-3">
+                                  <div>
+                                    <Label>Patient Contact</Label>
+                                    <p className="text-sm">{apt.patient.email}</p>
+                                  </div>
+                                  
+                                  {apt.notes && (
+                                    <div>
+                                      <Label>Notes</Label>
+                                      <p className="text-sm whitespace-pre-wrap">{apt.notes}</p>
+                                    </div>
+                                  )}
+                                  
+                                  <div className="flex gap-2 pt-2">
+                                    {apt.videoCallLink && canJoin && apt.status === 'CONFIRMED' && (
+                                      <Button
+                                        onClick={() => window.open(apt.videoCallLink, '_blank')}
+                                        className="flex-1"
+                                      >
+                                        <Video className="h-4 w-4 mr-2" />
+                                        Join Video Call
+                                      </Button>
+                                    )}
+                                    
+                                    {apt.status === 'CONFIRMED' && (
+                                      <Button
+                                        onClick={() => handleCancelAppointment(apt.id)}
+                                        variant="outline"
+                                        className="flex-1"
+                                      >
+                                        Cancel Appointment
+                                      </Button>
+                                    )}
+                                  </div>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
                   </TabsContent>
                 </Tabs>
               </CardContent>

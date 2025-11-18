@@ -41,25 +41,46 @@ class MessageBusClass {
       this.messageHistory.shift();
     }
 
-    // Route to specific recipient
-    if (message.to) {
-      const targetSubs = this.subscribers.get(message.to);
-      if (targetSubs) {
-        // Check for specific message type handlers
-        const specificHandlers = targetSubs.get(message.type) || [];
-        // Check for ALL message type handlers
-        const allHandlers = targetSubs.get('ALL') || [];
-        const handlers = [...specificHandlers, ...allHandlers];
-        
-        await Promise.all(handlers.map(handler => handler(message)));
+    console.log('📡 MessageBus: Publishing', message.type, 'to', this.subscribers.size, 'agent groups');
+    console.log('📡 MessageBus: All subscribers:', Array.from(this.subscribers.keys()));
+
+    // Broadcast to ALL subscribers of this message type
+    const handlers = [];
+    
+    for (const [agentName, agentSubs] of this.subscribers.entries()) {
+      console.log(`📡 MessageBus: Checking ${agentName}, agentSubs type:`, typeof agentSubs, 'is Map?', agentSubs instanceof Map);
+      console.log(`📡 MessageBus: ${agentName} subscriptions:`, Array.from(agentSubs.keys()));
+      
+      // Get handlers for this specific message type
+      const typeHandlers = agentSubs.get(message.type) || [];
+      // Get handlers for ALL message types
+      const allHandlers = agentSubs.get('ALL') || [];
+      
+      console.log(`📡 MessageBus: ${agentName} has ${typeHandlers.length} handlers for ${message.type}, ${allHandlers.length} for ALL`);
+      
+      handlers.push(...typeHandlers, ...allHandlers);
+      
+      if (typeHandlers.length > 0 || allHandlers.length > 0) {
+        console.log(`📡 MessageBus: Will notify ${agentName} (${typeHandlers.length} specific, ${allHandlers.length} all)`);
       }
     }
 
-    // Also notify monitoring systems
-    const monitoringSubs = this.subscribers.get('monitoring');
-    if (monitoringSubs) {
-      const handlers = monitoringSubs.get('ALL') || [];
-      await Promise.all(handlers.map(handler => handler(message)));
+    console.log('📡 MessageBus: Total handlers to notify:', handlers.length);
+    
+    if (handlers.length > 0) {
+      console.log('📡 MessageBus: Calling handlers...');
+      await Promise.all(handlers.map((handler, index) => {
+        try {
+          console.log(`📡 MessageBus: Calling handler ${index + 1}/${handlers.length}`);
+          return handler(message);
+        } catch (error) {
+          console.error('📡 MessageBus: Handler error:', error);
+          return Promise.resolve();
+        }
+      }));
+      console.log('📡 MessageBus: All handlers called');
+    } else {
+      console.log('📡 MessageBus: NO HANDLERS FOUND!');
     }
   }
 
@@ -98,15 +119,13 @@ class MessageBusClass {
   }
 }
 
-// Singleton instance
-let instance = null;
-
+// Singleton instance persisted globally
 export class MessageBus {
   static getInstance() {
-    if (!instance) {
-      instance = new MessageBusClass();
+    if (!globalThis.__HOSPITAL_MESSAGE_BUS__) {
+      globalThis.__HOSPITAL_MESSAGE_BUS__ = new MessageBusClass();
     }
-    return instance;
+    return globalThis.__HOSPITAL_MESSAGE_BUS__;
   }
 }
 

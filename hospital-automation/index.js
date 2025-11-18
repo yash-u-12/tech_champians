@@ -74,9 +74,7 @@ process.on('SIGINT', async () => {
   process.exit(0);
 });
 
-// Run if this is the main module
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch(console.error);
-}
+// Always run main (path normalization issues on Windows with import.meta.url)
+main().catch(console.error);
 
 export { main };

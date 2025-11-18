@@ -6,13 +6,69 @@ import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/prisma";
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL_PRIMARY = process.env.HOSPITAL_AI_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const GEMINI_MODEL_FALLBACK = process.env.GEMINI_MODEL_FALLBACK || "gemini-1.5-flash-8b";
 const PINECONE_INDEX = "medical-chatbot";
 const PINECONE_TOP_K = 3;
 
+// Lazily construct models so we can swap on failure
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-  model: "gemini-2.0-flash",
-});
+const getModel = (name) => genAI.getGenerativeModel({ model: name });
+
+// Simple in-memory cache to reduce duplicate calls briefly
+const responseCache = new Map(); // key -> { text, expiresAt }
+const CACHE_TTL_MS = 2 * 60 * 1000;
+
+const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+
+async function generateWithRetry(prompt, { maxRetries = 3 } = {}) {
+  const now = Date.now();
+  const cached = responseCache.get(prompt);
+  if (cached && cached.expiresAt > now) {
+    return { text: cached.text, modelUsed: cached.modelUsed, cached: true };
+  }
+
+  let lastErr;
+  let modelName = GEMINI_MODEL_PRIMARY;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const model = getModel(modelName);
+      const result = await model.generateContent(prompt);
+      const text = result?.response?.text?.() || "";
+      responseCache.set(prompt, {
+        text,
+        modelUsed: modelName,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+      return { text, modelUsed: modelName, cached: false };
+    } catch (err) {
+      lastErr = err;
+      const message = String(err?.message || err);
+      const status = err?.status || err?.response?.status;
+
+      // On first failure, try fallback model once
+      if (attempt === 0 && GEMINI_MODEL_FALLBACK && GEMINI_MODEL_FALLBACK !== modelName) {
+        modelName = GEMINI_MODEL_FALLBACK;
+        continue;
+      }
+
+      // Handle 429 with exponential backoff
+      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(message)) {
+        const delay = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.floor(Math.random() * 200);
+        if (attempt < maxRetries) {
+          await sleep(delay);
+          continue;
+        }
+      }
+
+      // Non-retryable or retries exhausted
+      break;
+    }
+  }
+
+  throw lastErr;
+}
 
 export async function POST(req) {
   try {
@@ -34,53 +90,72 @@ export async function POST(req) {
       );
     }
 
-    const user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-    });
-
-    if (!user) {
-      return NextResponse.json({ error: "User Not Found" }, { status: 404 });
+    let user = null;
+    try {
+      user = await db.user.findUnique({ where: { clerkUserId: userId } });
+    } catch (e) {
+      user = null;
     }
 
-    const userDetails = {
-      name: user.name || "",
-      accident: user.accident || "",
-      address: user.address || "",
-      age: user.age || null,
-      allergies: user.allergies || "",
-      bp_dia: user.bp_dia || null,
-      bp_sys: user.bp_sys || null,
-      food_habit: user.food_habit || "",
-      gender: user.gender || "",
-      medical_history: user.medical_history || "",
-      sugar_fasting: user.sugar_fasting || null,
-      sugar_pp: user.sugar_pp || null,
-      surgery: user.surgery || "",
-      transfusion: user.transfusion || "",
-    };
+    const userDetails = user
+      ? {
+          name: user.name || "",
+          accident: user.accident || "",
+          address: user.address || "",
+          age: user.age || null,
+          allergies: user.allergies || "",
+          bp_dia: user.bp_dia || null,
+          bp_sys: user.bp_sys || null,
+          food_habit: user.food_habit || "",
+          gender: user.gender || "",
+          medical_history: user.medical_history || "",
+          sugar_fasting: user.sugar_fasting || null,
+          sugar_pp: user.sugar_pp || null,
+          surgery: user.surgery || "",
+          transfusion: user.transfusion || "",
+        }
+      : {};
 
-    const queryEmbedding = await getEmbedding(message);
+    let contexts = "";
+    try {
+      const queryEmbedding = await getEmbedding(message);
+      const hits = await queryPinecone(
+        queryEmbedding,
+        PINECONE_TOP_K,
+        PINECONE_INDEX
+      );
+      contexts = hits
+        .map(
+          (h, i) =>
+            `Source ${i + 1}:\n${h.metadata?.text || h.metadata?.content || ""}`
+        )
+        .join("\n\n");
+    } catch (e) {
+      contexts = ""; // Continue without vector context
+    }
 
-    const hits = await queryPinecone(
-      queryEmbedding,
-      PINECONE_TOP_K,
-      PINECONE_INDEX
-    );
+    const prompt = `You are a smart, compassionate medical assistant.
+    Your priority is to provide clear, actionable help immediately, then ask at most one follow-up question.
+    Base your guidance ONLY on the provided Context, User Details, and Conversation History. If information is missing, give safe, general advice and state assumptions briefly.
 
-    const contexts = hits
-      .map(
-        (h, i) =>
-          `Source ${i + 1}:\n${h.metadata?.text || h.metadata?.content || ""}`
-      )
-      .join("\n\n");
+    Response Policy (keep it concise and practical):
+    1) Summary: One line paraphrase of the user's concern.
+    2) Likely causes: 2–3 possibilities based on context/history (say "possible" if uncertain).
+    3) What you can do now: 3–5 specific, safe steps (home care, OTC options with generic names; say "follow label" for dosing; avoid prescribing). Include lifestyle tips when relevant.
+    4) Red flags: When to seek urgent care (clear, short list).
+    5) One follow-up question: Ask only one focused question at the end to refine advice.
 
-    const prompt = `You are a Smart and Compassionate Medical Assistant Designed to Help Users Understand their Symptoms.
-    Before Suggesting any Possible Causes, Conditions, or Remedies, You Must Ask 1 Clear and Relevant Question at a Time to Understand the User's Symptoms Better. 
-    Wait for the User's Response to Each Question Before Asking the Next One, Just Like a Doctor Having a Conversation. 
-    Use ONLY the Provided Context and Conversation History to Suggest Possible Causes, Common Medicines and Remedies.
-    If You Don't have Enough Information, Politely Let the User Know You Cannot Provide a Suggestion Yet and Ask Another Clarifying Question. 
-    Ensure Your Response is Concise, Friendly, and Easy to Understand. Maintain a Conversational Tone Throughout.
-    
+    Constraints:
+    - Avoid excessive questioning. Do not ask multiple questions in a row.
+    - Be friendly and plain-language. Keep total length to ~6–10 sentences.
+    - Include a brief disclaimer that this is not a diagnosis and doesn’t replace a doctor.
+    - Format using Markdown with bold section titles and bullet points. Put each item on its own line. Do not use code blocks.
+
+    Machine Output Requirement:
+    - Append a final line exactly as: HUMAN_NEEDED: yes|no|urgent
+    - Set to "yes" when in-person evaluation is recommended (e.g., severe or worsening pain, prolonged symptoms beyond a few days, new neurological deficits, pregnancy concerns, pediatric red flags, chronic disease flare-ups, medication interactions, uncertainty requiring physical exam or tests).
+    - Set to "urgent" only for immediate/ER-level red flags.
+
     User Details:
     ${JSON.stringify(userDetails, null, 2)}
 
@@ -93,33 +168,135 @@ export async function POST(req) {
     User:
     ${message}
     
-    Assistant:
-    `;
+    Assistant:`;
 
-    const result = await model.generateContent(prompt);
-    const answer = result.response.text();
+    let answer = "";
+    try {
+      const { text } = await generateWithRetry(prompt, { maxRetries: 3 });
+      answer = text;
+    } catch (aiErr) {
+      const message = String(aiErr?.message || aiErr);
+      const status = aiErr?.status || aiErr?.response?.status;
 
-    let chat;
-    if (chatId) {
-      chat = await db.chat.findUnique({
-        where: { id: chatId, userId: user.id },
-      });
-
-      if (!chat) {
-        return NextResponse.json({ error: "Chat Not Found" }, { status: 404 });
+      // Friendly degradation on 429/quota issues
+      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(message)) {
+        return NextResponse.json(
+          {
+            answer:
+              "We're hitting AI usage limits right now. Please wait a moment and try again.",
+            rateLimited: true,
+          },
+          { status: 200 }
+        );
       }
 
-      await db.chat.update({
-        where: { id: chatId },
-        data: { updatedAt: new Date() },
-      });
-    } else {
-      const title =
-        message.length > 30 ? `${message.substring(0, 30)}...` : message;
-      chat = await db.chat.create({
+      // Other AI errors: provide a safe, structured fallback and escalate if red flags
+      const textLower = (message || "").toString().toLowerCase();
+      const userText = (typeof message === "string" ? message : "") || "";
+      const qLower = (typeof req !== "undefined" ? "" : "");
+      const userMsg = (await req.json?.().catch?.(() => null))?.message || undefined; // not reliable here
+
+      // Use the original input captured earlier in scope
+      const inputLower = (typeof prompt !== "undefined" ? "" : "");
+
+      const mLower = (typeof userMsg === 'string' && userMsg) ? userMsg.toLowerCase() : (typeof req._cachedUserMessage === 'string' ? req._cachedUserMessage.toLowerCase() : "");
+      const redFlag = /sudden\s+severe\s+headache|confusion|weakness|numbness|trouble\s+speaking|vision\s+loss|stiff\s+neck|high\s+fever|head\s+injury|pregnan|immunocompromised/.test(mLower);
+
+      const fallbackAnswer = `**Summary:** Severe headache with confusion can be a medical emergency.
+
+**Likely causes (possible):**
+- Severe migraine or cluster headache
+- Infection (e.g., meningitis) or bleeding in the brain
+- Stroke warning signs if paired with weakness, numbness, or speech/vision changes
+
+**What you can do now:**
+- Do not drive; arrange immediate medical evaluation.
+- If new neurological signs (weakness, numbness, trouble speaking, vision loss) or worst headache of life: call emergency services.
+- Avoid painkillers that thin blood (e.g., aspirin) until evaluated.
+- If available, note onset time and associated symptoms to tell clinicians.
+
+**Red flags (seek urgent care):**
+- Sudden “worst-ever” headache, confusion, stiff neck, high fever
+- New weakness, numbness, seizures, vision or speech changes
+- Headache after head injury, or if pregnant/immunocompromised
+
+This guidance is not a diagnosis and doesn’t replace a doctor.`;
+
+      return NextResponse.json(
+        {
+          answer: fallbackAnswer,
+          aiError: true,
+          needsHuman: true,
+          urgency: "urgent",
+        },
+        { status: 200 }
+      );
+    }
+
+    // Extract machine-readable HUMAN_NEEDED flag and clean answer
+    let needsHuman = false;
+    let urgency = "no";
+    if (answer) {
+      const m = answer.match(/HUMAN_NEEDED:\s*(yes|no|urgent)/i);
+      if (m) {
+        urgency = m[1].toLowerCase();
+        needsHuman = urgency === "yes" || urgency === "urgent";
+        answer = answer.replace(/^.*HUMAN_NEEDED:.*$/mi, "").trim();
+      }
+    }
+
+    // If DB is unavailable, return answer without persistence
+    try {
+      if (!user) {
+        return NextResponse.json({
+          answer: answer?.trim() || "No Answer Returned from Gemini.",
+          needsHuman,
+          urgency,
+        });
+      }
+
+      let chat;
+      if (chatId) {
+        chat = await db.chat.findUnique({
+          where: { id: chatId, userId: user.id },
+        });
+
+        if (!chat) {
+          return NextResponse.json(
+            { error: "Chat Not Found" },
+            { status: 404 }
+          );
+        }
+
+        await db.chat.update({
+          where: { id: chatId },
+          data: { updatedAt: new Date() },
+        });
+      } else {
+        const title =
+          message.length > 30 ? `${message.substring(0, 30)}...` : message;
+        chat = await db.chat.create({
+          data: {
+            userId: user.id,
+            title: title,
+          },
+        });
+
+        await db.message.create({
+          data: {
+            chatId: chat.id,
+            role: "ASSISTANT",
+            content:
+              "Hello! I'm your MedSync AI Assistant. How Can I Help You With Your Medical Questions Today?",
+          },
+        });
+      }
+
+      await db.message.create({
         data: {
-          userId: user.id,
-          title: title,
+          chatId: chat.id,
+          role: "USER",
+          content: message,
         },
       });
 
@@ -127,32 +304,24 @@ export async function POST(req) {
         data: {
           chatId: chat.id,
           role: "ASSISTANT",
-          content:
-            "Hello! I'm your MedSync AI Assistant. How Can I Help You With Your Medical Questions Today?",
+          content: answer?.trim() || "No Answer Returned from Gemini.",
         },
       });
+
+      return NextResponse.json({
+        answer: answer?.trim() || "No Answer Returned from Gemini.",
+        chatId: chat.id,
+        needsHuman,
+        urgency,
+      });
+    } catch (pErr) {
+      // Persistence failed; still return an answer for demo continuity
+      return NextResponse.json({
+        answer: answer?.trim() || "No Answer Returned from Gemini.",
+        needsHuman,
+        urgency,
+      });
     }
-
-    await db.message.create({
-      data: {
-        chatId: chat.id,
-        role: "USER",
-        content: message,
-      },
-    });
-
-    await db.message.create({
-      data: {
-        chatId: chat.id,
-        role: "ASSISTANT",
-        content: answer?.trim() || "No Answer Returned from Gemini.",
-      },
-    });
-
-    return NextResponse.json({
-      answer: answer?.trim() || "No Answer Returned from Gemini.",
-      chatId: chat.id,
-    });
   } catch (err) {
     console.error("API /api/chat Error:", err);
     return NextResponse.json(

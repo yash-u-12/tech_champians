@@ -170,7 +170,8 @@ export async function getDoctorAppointments() {
     });
 
     if (!doctor) {
-      throw new Error("Doctor Not Found");
+      // Return empty appointments if doctor profile not set up yet
+      return { appointments: [] };
     }
 
     const appointments = await db.appointment.findMany({

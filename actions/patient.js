@@ -14,15 +14,22 @@ export async function getPatientAppointments() {
     const user = await db.user.findUnique({
       where: {
         clerkUserId: userId,
-        role: "PATIENT",
       },
       select: {
         id: true,
+        role: true,
       },
     });
 
     if (!user) {
-      throw new Error("Patient not found");
+      // User not in database yet - return empty appointments
+      console.log('User not found in DB, returning empty appointments');
+      return { appointments: [] };
+    }
+
+    if (user.role !== "PATIENT") {
+      console.log('User is not a patient, returning empty appointments');
+      return { appointments: [] };
     }
 
     const appointments = await db.appointment.findMany({
@@ -47,6 +54,6 @@ export async function getPatientAppointments() {
     return { appointments };
   } catch (error) {
     console.error("Failed to Get Patient Appointments:", error);
-    return { error: "Failed to Fetch Appointments" };
+    return { appointments: [], error: "Failed to Fetch Appointments" };
   }
 }

@@ -1,17 +1,25 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { useUser } from '@clerk/nextjs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import DoctorInterface from '../../../hospital-automation/interfaces/doctor/DoctorInterface';
 import PatientInterface from '../../../hospital-automation/interfaces/patient/PatientInterface';
 import PharmacyInterface from '../../../hospital-automation/interfaces/pharmacy/PharmacyInterface';
-import { User, Stethoscope, Pill, Activity } from 'lucide-react';
+import ReceptionInterface from '../../../hospital-automation/interfaces/reception/ReceptionInterface';
+import LabInterface from '../../../hospital-automation/interfaces/lab/LabInterface';
+import BillingInterface from '../../../hospital-automation/interfaces/billing/BillingInterface';
+import { User, Stethoscope, Pill, Activity, UserCheck, TestTube, CreditCard } from 'lucide-react';
 
 export default function HospitalPortalPage() {
   const [userRole, setUserRole] = useState(null);
   const [userId, setUserId] = useState(null);
+  const searchParams = useSearchParams();
+  const [prefill, setPrefill] = useState({ name: '', reason: '' });
+  const { user } = useUser();
 
   // Generate a demo user ID if not set
   useEffect(() => {
@@ -19,6 +27,25 @@ export default function HospitalPortalPage() {
       setUserId(`USER${Date.now()}`);
     }
   }, []);
+
+  // Preselect role from query string (e.g., ?role=patient)
+  useEffect(() => {
+    const role = (searchParams?.get('role') || '').toLowerCase();
+    if (['doctor', 'patient', 'pharmacy', 'reception', 'lab', 'billing'].includes(role)) {
+      setUserRole(role);
+    }
+    const name = searchParams?.get('name') || '';
+    const reason = searchParams?.get('reason') || '';
+    if (name || reason) setPrefill({ name, reason });
+  }, [searchParams]);
+
+  // Force role based on Clerk public metadata if present
+  useEffect(() => {
+    const metaRole = (user?.publicMetadata?.role || '').toString().toLowerCase();
+    if (['patient', 'doctor', 'pharmacy', 'reception', 'lab', 'billing'].includes(metaRole)) {
+      setUserRole(metaRole);
+    }
+  }, [user]);
 
   // Role selector for demo/testing purposes
   const selectRole = (role) => {
@@ -37,7 +64,7 @@ export default function HospitalPortalPage() {
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-3">
             {/* Doctor Card */}
             <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => selectRole('doctor')}>
               <CardHeader>
@@ -97,6 +124,66 @@ export default function HospitalPortalPage() {
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Reception Card */}
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => selectRole('reception')}>
+              <CardHeader>
+                <div className="flex justify-center mb-4">
+                  <div className="p-4 bg-orange-100 rounded-full">
+                    <UserCheck className="h-12 w-12 text-orange-600" />
+                  </div>
+                </div>
+                <CardTitle className="text-center">Reception</CardTitle>
+                <CardDescription className="text-center">
+                  Monitor patient queue, registrations, and wait times
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">
+                  Access Reception Portal
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Lab Card */}
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => selectRole('lab')}>
+              <CardHeader>
+                <div className="flex justify-center mb-4">
+                  <div className="p-4 bg-cyan-100 rounded-full">
+                    <TestTube className="h-12 w-12 text-cyan-600" />
+                  </div>
+                </div>
+                <CardTitle className="text-center">Laboratory</CardTitle>
+                <CardDescription className="text-center">
+                  Process test orders, generate results, manage specimens
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">
+                  Access Lab Portal
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Billing Card */}
+            <Card className="cursor-pointer hover:shadow-lg transition-shadow" onClick={() => selectRole('billing')}>
+              <CardHeader>
+                <div className="flex justify-center mb-4">
+                  <div className="p-4 bg-yellow-100 rounded-full">
+                    <CreditCard className="h-12 w-12 text-yellow-600" />
+                  </div>
+                </div>
+                <CardTitle className="text-center">Billing</CardTitle>
+                <CardDescription className="text-center">
+                  Manage invoices, payments, and financial records
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button className="w-full">
+                  Access Billing Portal
+                </Button>
+              </CardContent>
+            </Card>
           </div>
 
           <Card className="bg-secondary/20">
@@ -146,8 +233,13 @@ export default function HospitalPortalPage() {
 
       {/* Render Interface */}
       {userRole === 'doctor' && <DoctorInterface userId={userId} />}
-      {userRole === 'patient' && <PatientInterface userId={userId} />}
+      {userRole === 'patient' && (
+        <PatientInterface userId={userId} defaultName={prefill.name} defaultReason={prefill.reason} />
+      )}
       {userRole === 'pharmacy' && <PharmacyInterface pharmacistId={userId} />}
+      {userRole === 'reception' && <ReceptionInterface receptionistId={userId} />}
+      {userRole === 'lab' && <LabInterface labTechId={userId} />}
+      {userRole === 'billing' && <BillingInterface billingStaffId={userId} />}
     </div>
   );
 }

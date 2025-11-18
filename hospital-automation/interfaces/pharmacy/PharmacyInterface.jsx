@@ -38,10 +38,14 @@ export default function PharmacyInterface({ pharmacistId }) {
 
   const fetchOrders = async () => {
     try {
+      console.log('🔍 Pharmacy UI: Fetching orders...');
       const response = await fetch('/api/hospital-automation/pharmacy/orders');
       if (response.ok) {
         const data = await response.json();
+        console.log('🔍 Pharmacy UI: Received', data.orders?.length || 0, 'orders', data.orders);
         setOrders(data.orders || []);
+      } else {
+        console.error('🔍 Pharmacy UI: Fetch failed', response.status);
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -54,9 +58,15 @@ export default function PharmacyInterface({ pharmacistId }) {
       if (response.ok) {
         const data = await response.json();
         setInventory(data.inventory || []);
+      } else {
+        console.error('Inventory fetch failed:', response.status);
+        // Don't throw error, just use empty array
+        setInventory([]);
       }
     } catch (error) {
       console.error('Error fetching inventory:', error);
+      // Don't throw error, just use empty array
+      setInventory([]);
     }
   };
 

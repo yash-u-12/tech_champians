@@ -1,36 +1,94 @@
 import { NextResponse } from 'next/server';
-import MessageBus from '../../../../../hospital-automation/agents/message-bus.js';
+import { getOrchestrator } from '@/hospital-automation/workflows/orchestrator';
+import { db } from '@/lib/prisma';
 
-const messageBus = MessageBus.getInstance();
-
-// POST - Patient check-in
+// POST - Patient check-in via orchestrator (ReceptionAgent)
 export async function POST(request) {
   try {
     const body = await request.json();
     const { patientId, name, reason, isEmergency } = body;
-    
+
     if (!patientId || !name || !reason) {
-      return NextResponse.json({ 
-        error: 'Missing required fields' 
+      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+    }
+
+    const orch = getOrchestrator();
+    if (!orch.isRunning) await orch.initialize();
+    const reception = orch.getAgent('ReceptionAgent');
+    const scheduling = orch.getAgent('SchedulingAgent');
+    
+    // Check if patient already has an active appointment
+    const existingReg = reception.registeredPatients.get(patientId);
+    const existingAppt = Array.from(scheduling.appointments.values())
+      .find(a => a.patientId === patientId && a.status !== 'completed');
+    
+    if (existingReg && existingAppt) {
+      return NextResponse.json({
+        success: false,
+        error: 'You already have an active appointment. Please wait for your turn.',
+        existingAppointment: true
       }, { status: 400 });
     }
     
-    // Send check-in message to reception agent
-    messageBus.publish({
-      type: 'PATIENT_ARRIVAL',
-      data: {
-        patientId,
+    // Proceed with check-in
+    const registration = await reception.checkInPatient({
+      patientId,
+      name,
+      reason,
+      isEmergency: !!isEmergency
+    });
+
+    // Store visit data in database - PRIMARY STORAGE
+    const appointmentId = `apt-${Date.now()}`;
+    try {
+      const user = await db.user.findUnique({ where: { clerkUserId: patientId } });
+      const visitData = {
+        appointmentId,
         name,
         reason,
-        isEmergency: isEmergency || false,
-        timestamp: new Date().toISOString()
+        urgency: registration.urgency || (isEmergency ? 'critical' : 'normal'),
+        arrivalTime: new Date().toISOString(),
+        status: 'waiting',
+        doctorName: 'Not assigned yet',
+        roomId: 'Waiting area'
+      };
+      
+      const existingHistory = user?.medical_history || '{"visits":[]}';
+      let visits;
+      try {
+        visits = JSON.parse(existingHistory);
+      } catch {
+        visits = { visits: [] };
       }
-    });
-    
-    return NextResponse.json({ 
+      if (!visits.visits) visits.visits = [];
+      visits.visits.push(visitData);
+      visits.currentAppointmentId = appointmentId;
+      
+      await db.user.upsert({
+        where: { clerkUserId: patientId },
+        update: { 
+          medical_history: JSON.stringify(visits),
+          name: name
+        },
+        create: {
+          clerkUserId: patientId,
+          email: `${patientId}@temp.com`,
+          name: name,
+          medical_history: JSON.stringify(visits)
+        }
+      });
+      
+      console.log('✅ Check-in saved to database:', appointmentId);
+    } catch (dbError) {
+      console.error('❌ DB storage failed:', dbError.message);
+      throw dbError;
+    }
+
+    return NextResponse.json({
       success: true,
       message: 'Check-in successful. Please wait for your turn.',
-      patientId
+      patientId: registration.patientId,
+      urgency: registration.urgency,
     });
   } catch (error) {
     console.error('Error processing check-in:', error);

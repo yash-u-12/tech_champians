@@ -16,6 +16,13 @@ export class HospitalOrchestrator {
   async initialize() {
     console.log('🏥 Initializing Hospital Automation System...');
 
+    // Initialize pharmacy orders storage
+    if (!global.pharmacyOrders) {
+      global.pharmacyOrders = new Map();
+      global.orderCounter = 1;
+      console.log('📦 Initialized pharmacy orders storage');
+    }
+
     // Create all agents
     this.agents.set('ReceptionAgent', new ReceptionAgent());
     this.agents.set('TriageAgent', new TriageAgent());
@@ -36,6 +43,38 @@ export class HospitalOrchestrator {
         }
       );
     }
+
+    // Set up pharmacy orders subscription
+    console.log('🏥 ORCHESTRATOR: Setting up pharmacy orders subscription');
+    this.messageBus.subscribe('PharmacyOrdersAPI', ['PRESCRIPTION_WRITTEN'], (message) => {
+      console.log('\n═══════════════════════════════════════');
+      console.log('📦 PHARMACY SUBSCRIPTION: Received PRESCRIPTION_WRITTEN');
+      console.log('📦 PHARMACY SUBSCRIPTION: Message:', JSON.stringify(message, null, 2));
+      const { appointmentId, patientId, prescription, diagnosis, notes, timestamp } = message.data;
+      
+      const orderId = `PH${String(global.orderCounter++).padStart(6, '0')}`;
+      
+      const order = {
+        orderId,
+        appointmentId,
+        patientId,
+        patientName: message.data.patientName || 'Unknown',
+        medications: prescription,
+        diagnosis,
+        notes,
+        status: 'pending',
+        timestamp,
+        billGenerated: false,
+        totalAmount: 0
+      };
+      
+      global.pharmacyOrders.set(orderId, order);
+      console.log('📦 PHARMACY SUBSCRIPTION: Order created:', JSON.stringify(order, null, 2));
+      console.log('📦 PHARMACY SUBSCRIPTION: Total orders in storage:', global.pharmacyOrders.size);
+      console.log('📦 PHARMACY SUBSCRIPTION: All order IDs:', Array.from(global.pharmacyOrders.keys()));
+      console.log('═══════════════════════════════════════\n');
+    });
+    console.log('🏥 ORCHESTRATOR: Pharmacy orders subscription set up successfully');
 
     // Start all agents
     for (const agent of this.agents.values()) {
@@ -254,14 +293,12 @@ export class HospitalOrchestrator {
   }
 }
 
-// Singleton instance
-let orchestratorInstance = null;
-
+// Singleton instance persisted across module reloads/requests
 export function getOrchestrator() {
-  if (!orchestratorInstance) {
-    orchestratorInstance = new HospitalOrchestrator();
+  if (!globalThis.__HOSPITAL_ORCHESTRATOR__) {
+    globalThis.__HOSPITAL_ORCHESTRATOR__ = new HospitalOrchestrator();
   }
-  return orchestratorInstance;
+  return globalThis.__HOSPITAL_ORCHESTRATOR__;
 }
 
 export default HospitalOrchestrator;

@@ -81,18 +81,32 @@ export default function HeaderClient({ userData }) {
 
               {/* Patient Links */}
               {clientUser?.role === "PATIENT" && (
-                <Link href="/appointments">
-                  <Button
-                    variant="outline"
-                    className="hidden md:inline-flex items-center gap-2"
-                  >
-                    <Calendar className="h-4 w-4" />
-                    My Appointments
-                  </Button>
-                  <Button variant="ghost" className="md:hidden w-10 h-10 p-0">
-                    <Calendar className="h-4 w-4" />
-                  </Button>
-                </Link>
+                <>
+                  <Link href="/doctors">
+                    <Button
+                      variant="outline"
+                      className="hidden md:inline-flex items-center gap-2"
+                    >
+                      <Stethoscope className="h-4 w-4" />
+                      Find Doctors
+                    </Button>
+                    <Button variant="ghost" className="md:hidden w-10 h-10 p-0">
+                      <Stethoscope className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                  <Link href="/appointments">
+                    <Button
+                      variant="outline"
+                      className="hidden md:inline-flex items-center gap-2"
+                    >
+                      <Calendar className="h-4 w-4" />
+                      Appointments
+                    </Button>
+                    <Button variant="ghost" className="md:hidden w-10 h-10 p-0">
+                      <Calendar className="h-4 w-4" />
+                    </Button>
+                  </Link>
+                </>
               )}
 
               {/* Unassigned Role */}
@@ -107,6 +121,24 @@ export default function HeaderClient({ userData }) {
                   </Button>
                   <Button variant="ghost" className="md:hidden w-10 h-10 p-0">
                     <User className="h-4 w-4" />
+                  </Button>
+                </Link>
+              )}
+
+              {clientUser?.role && (
+                <Link href="/hospital-portal">
+                  <Button
+                    variant="outline"
+                    className="hidden md:inline-flex items-center gap-2 bg-blue-900/20 border-blue-700/30"
+                  >
+                    <Stethoscope className="h-4 w-4 text-blue-400" />
+                    Hospital Portal
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="md:hidden w-10 h-10 p-0"
+                  >
+                    <Stethoscope className="h-4 w-4 text-blue-400" />
                   </Button>
                 </Link>
               )}

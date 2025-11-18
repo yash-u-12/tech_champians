@@ -1,170 +1,101 @@
 import { NextResponse } from 'next/server';
-import MessageBus from '../../../../hospital-automation/agents/message-bus.js';
+import { getOrchestrator } from '@/hospital-automation/workflows/orchestrator';
+import { db } from '@/lib/prisma';
+import { auth } from '@clerk/nextjs/server';
 
-const messageBus = MessageBus.getInstance();
-
-// Store doctor-patient assignments in memory (use database in production)
-const doctorPatients = new Map();
-const patientDetails = new Map();
-
-// Subscribe to relevant messages
-messageBus.subscribe('DOCTOR_ASSIGNED', (message) => {
-  const { doctorName, appointmentId, patientId, patientName, reason, roomId } = message.data;
-  
-  if (!doctorPatients.has(doctorName)) {
-    doctorPatients.set(doctorName, []);
-  }
-  
-  const patient = {
-    appointmentId,
-    patientId,
-    patientName,
-    reason,
-    roomId,
-    status: 'waiting',
-    assignedAt: new Date().toISOString(),
-    labResults: [],
-    prescription: null
-  };
-  
-  doctorPatients.get(doctorName).push(patient);
-  patientDetails.set(patientId, patient);
-});
-
-messageBus.subscribe('LAB_RESULTS_READY', (message) => {
-  const { appointmentId, results } = message.data;
-  
-  // Find patient by appointmentId and update lab results
-  for (const [doctorName, patients] of doctorPatients.entries()) {
-    const patient = patients.find(p => p.appointmentId === appointmentId);
-    if (patient) {
-      patient.labResults = results || [];
-      const stored = patientDetails.get(patient.patientId);
-      if (stored) {
-        stored.labResults = results || [];
-      }
-      break;
-    }
-  }
-});
-
-messageBus.subscribe('CONSULTATION_STARTED', (message) => {
-  const { appointmentId } = message.data;
-  
-  for (const [doctorName, patients] of doctorPatients.entries()) {
-    const patient = patients.find(p => p.appointmentId === appointmentId);
-    if (patient) {
-      patient.status = 'in_consultation';
-      const stored = patientDetails.get(patient.patientId);
-      if (stored) stored.status = 'in_consultation';
-      break;
-    }
-  }
-});
-
-// GET - Fetch patients assigned to a doctor
+// GET - Fetch patients assigned to a doctor (orchestrator queue + DB appointments)
 export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
-    const doctorName = searchParams.get('doctorName');
+    const all = (searchParams.get('all') || '').toLowerCase() === 'true';
     
-    if (!doctorName) {
-      return NextResponse.json({ error: 'Doctor name required' }, { status: 400 });
-    }
+    const patients = [];
     
-    const patients = doctorPatients.get(doctorName) || [];
-    
-    // Filter out completed patients older than 2 hours
-    const activePatients = patients.filter(p => {
-      if (p.status === 'completed') {
-        const assignedTime = new Date(p.assignedAt).getTime();
-        const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
-        return assignedTime > twoHoursAgo;
+    // Get ALL patients from database who have active visits
+    try {
+      const users = await db.user.findMany({
+        where: {
+          medical_history: { not: null }
+        }
+      });
+      
+      for (const user of users) {
+        try {
+          const visits = JSON.parse(user.medical_history);
+          if (visits.currentAppointmentId && visits.visits) {
+            const currentVisit = visits.visits.find(v => 
+              v.appointmentId === visits.currentAppointmentId && 
+              v.status !== 'completed'
+            );
+            
+            if (currentVisit) {
+              patients.push({
+                appointmentId: currentVisit.appointmentId,
+                patientId: user.clerkUserId,
+                name: currentVisit.name,
+                reason: currentVisit.reason,
+                roomId: currentVisit.roomId || 'Waiting',
+                priority: currentVisit.urgency || 'routine',
+                status: currentVisit.status || 'waiting',
+                arrivalTime: currentVisit.arrivalTime,
+                doctorName: currentVisit.doctorName,
+                symptoms: currentVisit.symptoms,
+                possibleConditions: currentVisit.possibleConditions,
+                vitals: currentVisit.vitals,
+                source: 'database'
+              });
+            }
+          }
+        } catch (e) {
+          console.log('Parse error for user:', user.clerkUserId);
+        }
       }
-      return true;
-    });
-    
-    return NextResponse.json({ 
-      success: true,
-      patients: activePatients
-    });
+      
+      console.log('✅ Found', patients.length, 'active patients in database');
+    } catch (dbError) {
+      console.error('❌ Database query failed:', dbError.message);
+    }
+
+    // Also check orchestrator as fallback
+    try {
+      const orch = getOrchestrator();
+      if (orch.isRunning) {
+        const scheduling = orch.getAgent('SchedulingAgent');
+        const reception = orch.getAgent('ReceptionAgent');
+        const triage = orch.getAgent('TriageAgent');
+        
+        reception.registeredPatients.forEach((patient, patientId) => {
+          const alreadyAdded = patients.some(p => p.patientId === patientId);
+          if (!alreadyAdded) {
+            const appointment = Array.from(scheduling.appointments.values())
+              .find(a => a.patientId === patientId);
+            const assessment = triage.assessments.get(patientId);
+            
+            patients.push({
+              appointmentId: appointment?.appointmentId || null,
+              patientId: patient.patientId,
+              name: patient.name || 'Patient',
+              reason: patient.reason || 'Consultation',
+              roomId: appointment?.roomId || 'Waiting',
+              priority: patient.urgency || 'routine',
+              status: appointment?.status || 'waiting',
+              arrivalTime: patient.arrivalTime,
+              doctorName: appointment?.doctorName,
+              symptoms: assessment?.symptoms,
+              possibleConditions: assessment?.possibleConditions,
+              vitals: assessment?.vitals,
+              source: 'orchestrator'
+            });
+          }
+        });
+      }
+    } catch (orchError) {
+      console.log('Orchestrator check failed:', orchError.message);
+    }
+
+    return NextResponse.json({ success: true, patients });
   } catch (error) {
     console.error('Error fetching doctor patients:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-}
-
-// POST - Submit prescription or complete consultation
-export async function POST(request) {
-  try {
-    const body = await request.json();
-    const { action, appointmentId, patientId, prescription, diagnosis, notes } = body;
-    
-    if (action === 'submit_prescription') {
-      // Store prescription
-      const patient = patientDetails.get(patientId);
-      if (patient) {
-        patient.prescription = prescription;
-        patient.diagnosis = diagnosis;
-        patient.notes = notes;
-      }
-      
-      // Send prescription to pharmacy agent
-      messageBus.publish({
-        type: 'PRESCRIPTION_WRITTEN',
-        data: {
-          appointmentId,
-          patientId,
-          prescription,
-          diagnosis,
-          notes,
-          timestamp: new Date().toISOString()
-        }
-      });
-      
-      return NextResponse.json({ 
-        success: true,
-        message: 'Prescription submitted to pharmacy'
-      });
-    }
-    
-    if (action === 'complete_consultation') {
-      // Update patient status
-      const patient = patientDetails.get(patientId);
-      if (patient) {
-        patient.status = 'completed';
-      }
-      
-      // Remove from doctor's active list after delay
-      setTimeout(() => {
-        for (const [doctorName, patients] of doctorPatients.entries()) {
-          const index = patients.findIndex(p => p.appointmentId === appointmentId);
-          if (index !== -1) {
-            patients.splice(index, 1);
-            break;
-          }
-        }
-      }, 5000);
-      
-      // Notify scheduling agent
-      messageBus.publish({
-        type: 'CONSULTATION_COMPLETE',
-        data: {
-          appointmentId,
-          patientId,
-          timestamp: new Date().toISOString()
-        }
-      });
-      
-      return NextResponse.json({ 
-        success: true,
-        message: 'Consultation completed'
-      });
-    }
-    
-    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
-  } catch (error) {
-    console.error('Error processing doctor request:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

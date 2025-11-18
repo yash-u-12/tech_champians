@@ -19,10 +19,7 @@ export const metadata = {
 
 export default async function AIAssistantPage() {
   const user = await checkUser();
-
-  if (!user || user.role !== "PATIENT") {
-    redirect("/");
-  }
+  if (!user) redirect("/sign-in");
 
   return (
     <div className="container mx-auto py-8 px-4">

@@ -1,28 +1,35 @@
-import { NextResponse } from "next/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
-export async function middleware(request) {
-  const { pathname } = request.nextUrl;
+// Public routes (accessible without authentication)
+const isPublicRoute = createRouteMatcher([
+  '/',
+  '/sign-in(.*)',
+  '/sign-up(.*)',
+  // Hospital workflows intentionally public for demo
+  '/hospital-workflow(.*)',
+  '/hospital-portal(.*)',
+  '/hospital-automation(.*)',
+  '/api/hospital(.*)'
+]);
 
-  // Bypass authentication completely for hospital routes
-  if (
-    pathname.startsWith('/hospital-workflow') ||
-    pathname.startsWith('/hospital-portal') ||
-    pathname.startsWith('/hospital-automation') ||
-    pathname.startsWith('/api/hospital')
-  ) {
-    return NextResponse.next();
+export default clerkMiddleware((auth, req) => {
+  if (!isPublicRoute(req)) {
+    try {
+      if (typeof auth === 'function') {
+        const a = auth();
+        if (a && typeof a.protect === 'function') a.protect();
+      } else if (auth && typeof auth.protect === 'function') {
+        auth.protect();
+      }
+    } catch (_) {
+      // Silently ignore; Clerk will handle unauthorized state downstream
+    }
   }
-
-  // For now, allow all other routes to proceed without auth
-  // You can add Clerk back later when you have valid keys
-  return NextResponse.next();
-}
+});
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
-    "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
-    "/(api|trpc)(.*)",
+    '/((?!_next|.*\\..*).*)',
+    '/(api|trpc)(.*)'
   ],
 };

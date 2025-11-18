@@ -14,7 +14,7 @@ import {
   CreditCard,
 } from "lucide-react";
 import { useRouter, useParams } from "next/navigation";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
 import {
   Dialog,
   DialogContent,
@@ -30,6 +30,7 @@ export default function ChatUI() {
   const endRef = useRef(null);
 
   const { userId } = useAuth();
+  const { user } = useUser();
   const [chatId, setChatId] = useState(params?.chatId || null);
   const [chats, setChats] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -61,9 +62,13 @@ export default function ChatUI() {
       const data = await response.json();
       if (data.credits !== undefined) {
         setUserCredits(data.credits);
+        if (data.credits >= 500) setUnlockChat(true);
       }
     } catch (error) {
       console.error("Error Fetching User Credits:", error);
+      // Demo fallback: unlock chat when credits endpoint fails (e.g., DB unavailable)
+      setUserCredits(1000);
+      setUnlockChat(true);
     }
   }
 
@@ -107,8 +112,10 @@ export default function ChatUI() {
   }
 
   function startNewChat() {
-    if (userCredits < 500) {
-      setShowCreditDialog(true);
+    if (userCredits < 500 && !unlockChat) {
+      // Demo fallback: unlock chat even without credits
+      setUnlockChat(true);
+      if (chatId) router.push("/ai-assistant/chat");
       return;
     } else if (chatId) {
       router.push("/ai-assistant/chat");
@@ -191,6 +198,33 @@ export default function ChatUI() {
           setChatId(json.chatId);
           router.push(`/ai-assistant/${json.chatId}`);
           fetchChats();
+        }
+
+        // Redirect to Hospital Portal when escalation is needed
+        if (json.needsHuman) {
+          const displayName =
+            user?.fullName ||
+            user?.username ||
+            user?.emailAddresses?.[0]?.emailAddress ||
+            "Patient";
+          setMessages((m) => [
+            ...m,
+            {
+              role: "assistant",
+              content:
+                json.urgency === "urgent"
+                  ? "This looks urgent and needs a clinician now. Redirecting you to the Hospital Portal in ~10 seconds..."
+                  : "This likely needs a clinician’s review. Redirecting you to the Hospital Portal in ~10 seconds...",
+            },
+          ]);
+          setTimeout(() => {
+            const q = new URLSearchParams({
+              role: "patient",
+              name: displayName,
+              reason: userMsg.content || "",
+            }).toString();
+            router.push(`/hospital-portal?${q}`);
+          }, 10000);
         }
       } else {
         setMessages((m) => [
@@ -305,7 +339,7 @@ export default function ChatUI() {
                     )}
                   </div>
                   <div className="flex-1">
-                    <p className="text-sm">{message.content}</p>
+                    <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.content}</p>
                   </div>
                 </div>
               </div>
