@@ -10,7 +10,6 @@ import {
   Trash2,
   Sidebar,
   MessageCircle,
-  Lock,
   CreditCard,
 } from "lucide-react";
 import { useRouter, useParams } from "next/navigation";
@@ -51,26 +50,9 @@ export default function ChatUI() {
   useEffect(() => {
     if (userId) {
       fetchChats();
-      fetchUserCredits();
       if (chatId) fetchMessages(chatId);
     }
   }, [userId, chatId]);
-
-  async function fetchUserCredits() {
-    try {
-      const response = await fetch("/api/user/credits");
-      const data = await response.json();
-      if (data.credits !== undefined) {
-        setUserCredits(data.credits);
-        if (data.credits >= 500) setUnlockChat(true);
-      }
-    } catch (error) {
-      console.error("Error Fetching User Credits:", error);
-      // Demo fallback: unlock chat when credits endpoint fails (e.g., DB unavailable)
-      setUserCredits(1000);
-      setUnlockChat(true);
-    }
-  }
 
   async function fetchChats() {
     try {
@@ -373,12 +355,9 @@ export default function ChatUI() {
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder={
-                !unlockChat && !chatId
-                  ? "Unlock Chat to Start"
-                  : "Type Your Message..."
+                  "Type Your Message..."
               }
               className="flex-1 bg-muted/20 border-emerald-900/20 text-white text-sm"
-              disabled={loading || (!unlockChat && !chatId)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -451,22 +430,7 @@ function SidebarContent({
             </div>
           </div>
         )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={startNewChat}
-          className={`${
-            hasEnoughCredits
-              ? "text-emerald-500 hover:text-emerald-300"
-              : "text-gray-500"
-          }`}
-        >
-          {hasEnoughCredits ? (
-            <Plus className="h-5 w-5" />
-          ) : (
-            <Lock className="h-5 w-5" />
-          )}
-        </Button>
+        
       </div>
       <div className="flex-1 overflow-y-auto">
         {chats.length === 0 ? (

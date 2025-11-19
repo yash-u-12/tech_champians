@@ -33,15 +33,6 @@ export default function Home() {
               <div className="flex flex-col sm:flex-row gap-4">
                 <Button
                   asChild
-                  size="lg"
-                  className="bg-emerald-600 text-white hover:bg-emerald-700"
-                >
-                  <Link href="/doctors">
-                    Book Appointment <ArrowRight className="ml-2 h-4 w-4" />
-                  </Link>
-                </Button>
-                <Button
-                  asChild
                   variant="outline"
                   size="lg"
                   className="border-emerald-700/30 hover:bg-muted/80"

@@ -8,6 +8,8 @@ import { db } from "@/lib/prisma";
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL_PRIMARY = process.env.HOSPITAL_AI_MODEL || process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const GEMINI_MODEL_FALLBACK = process.env.GEMINI_MODEL_FALLBACK || "gemini-1.5-flash-8b";
+const PINECONE_INDEX = "medical-chatbot";
+const PINECONE_TOP_K = 3;
 
 // Lazily construct models so we can swap on failure
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
@@ -52,7 +54,7 @@ async function generateWithRetry(prompt, { maxRetries = 3 } = {}) {
       }
 
       // Handle 429 with exponential backoff
-      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(errMessage)) {
+      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(message)) {
         const delay = Math.min(1000 * Math.pow(2, attempt), 8000) + Math.floor(Math.random() * 200);
         if (attempt < maxRetries) {
           await sleep(delay);
@@ -95,6 +97,43 @@ export async function POST(req) {
       user = null;
     }
 
+    const userDetails = user
+      ? {
+          name: user.name || "",
+          accident: user.accident || "",
+          address: user.address || "",
+          age: user.age || null,
+          allergies: user.allergies || "",
+          bp_dia: user.bp_dia || null,
+          bp_sys: user.bp_sys || null,
+          food_habit: user.food_habit || "",
+          gender: user.gender || "",
+          medical_history: user.medical_history || "",
+          sugar_fasting: user.sugar_fasting || null,
+          sugar_pp: user.sugar_pp || null,
+          surgery: user.surgery || "",
+          transfusion: user.transfusion || "",
+        }
+      : {};
+
+    let contexts = "";
+    try {
+      const queryEmbedding = await getEmbedding(message);
+      const hits = await queryPinecone(
+        queryEmbedding,
+        PINECONE_TOP_K,
+        PINECONE_INDEX
+      );
+      contexts = hits
+        .map(
+          (h, i) =>
+            `Source ${i + 1}:\n${h.metadata?.text || h.metadata?.content || ""}`
+        )
+        .join("\n\n");
+    } catch (e) {
+      contexts = ""; // Continue without vector context
+    }
+
     const prompt = `You are a smart, compassionate medical assistant.
     Your priority is to provide clear, actionable help immediately, then ask at most one follow-up question.
     Base your guidance ONLY on the provided Context, User Details, and Conversation History. If information is missing, give safe, general advice and state assumptions briefly.
@@ -122,6 +161,12 @@ export async function POST(req) {
     User Details:
     ${JSON.stringify(userDetails, null, 2)}
 
+    Context:
+    ${contexts}
+    
+    Conversation History:
+    ${formattedHistory}
+    
     User:
     ${message}
     
@@ -132,11 +177,11 @@ export async function POST(req) {
       const { text } = await generateWithRetry(prompt, { maxRetries: 3 });
       answer = text;
     } catch (aiErr) {
-      const errMessage = String(aiErr?.message || aiErr);
+      const message = String(aiErr?.message || aiErr);
       const status = aiErr?.status || aiErr?.response?.status;
 
       // Friendly degradation on 429/quota issues
-      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(errMessage)) {
+      if (status === 429 || /429|Too Many Requests|quota|Resource exhausted/i.test(message)) {
         return NextResponse.json(
           {
             answer:
@@ -147,59 +192,48 @@ export async function POST(req) {
         );
       }
 
-      // Other AI errors: provide a safe fallback based on the ACTUAL user input
-      // Use the 'message' variable from line 81 (the original user input)
-      const userMsgLower = (message || "").toLowerCase();
-      
-      // Check for true red-flag symptoms requiring urgent care
-      const redFlag = /sudden.*severe.*headache|worst.*headache.*life|confusion.*headache|weakness|numbness|trouble\s+speaking|vision\s+loss|stiff\s+neck|chest.*pain|difficulty.*breathing|severe.*bleeding|unconscious|seizure|stroke|heart.*attack/.test(userMsgLower);
+      // Other AI errors: provide a safe, structured fallback and escalate if red flags
+      const textLower = (message || "").toString().toLowerCase();
+      const userText = (typeof message === "string" ? message : "") || "";
+      const qLower = (typeof req !== "undefined" ? "" : "");
+      const userMsg = (await req.json?.().catch?.(() => null))?.message || undefined; // not reliable here
 
-      let fallbackAnswer = "";
-      let needsHumanFallback = false;
-      let urgencyLevel = "no";
+      // Use the original input captured earlier in scope
+      const inputLower = (typeof prompt !== "undefined" ? "" : "");
 
-      if (redFlag) {
-        // True emergency symptoms detected
-        fallbackAnswer = `**Summary:** Your symptoms suggest a potentially serious medical emergency.
+      const mLower = (typeof userMsg === 'string' && userMsg) ? userMsg.toLowerCase() : (typeof req._cachedUserMessage === 'string' ? req._cachedUserMessage.toLowerCase() : "");
+      const redFlag = /sudden\s+severe\s+headache|confusion|weakness|numbness|trouble\s+speaking|vision\s+loss|stiff\s+neck|high\s+fever|head\s+injury|pregnan|immunocompromised/.test(mLower);
 
-**Immediate Action Required:**
-- Do not drive yourself; call emergency services or have someone take you to the ER immediately.
-- If experiencing chest pain, difficulty breathing, sudden severe headache, or stroke symptoms: **Call emergency services now**.
+      const fallbackAnswer = `**Summary:** Severe headache with confusion can be a medical emergency.
 
-**Red flag symptoms include:**
-- Sudden "worst-ever" headache, confusion, stiff neck, high fever
-- Chest pain, difficulty breathing, or pressure in chest
+**Likely causes (possible):**
+- Severe migraine or cluster headache
+- Infection (e.g., meningitis) or bleeding in the brain
+- Stroke warning signs if paired with weakness, numbness, or speech/vision changes
+
+**What you can do now:**
+- Do not drive; arrange immediate medical evaluation.
+- If new neurological signs (weakness, numbness, trouble speaking, vision loss) or worst headache of life: call emergency services.
+- Avoid painkillers that thin blood (e.g., aspirin) until evaluated.
+- If available, note onset time and associated symptoms to tell clinicians.
+
+**Red flags (seek urgent care):**
+- Sudden “worst-ever” headache, confusion, stiff neck, high fever
 - New weakness, numbness, seizures, vision or speech changes
-- Severe bleeding or loss of consciousness
+- Headache after head injury, or if pregnant/immunocompromised
 
-This guidance is not a diagnosis. Get immediate medical evaluation.`;
-        needsHumanFallback = true;
-        urgencyLevel = "urgent";
-      } else {
-        // No red flags - provide general self-care advice
-        fallbackAnswer = `I apologize, but I'm having trouble processing your request right now due to a technical issue. 
-
-For your health concern, here's general guidance:
-- If symptoms are mild and manageable, try rest, hydration, and over-the-counter remedies as appropriate
-- Monitor your symptoms - if they worsen or persist beyond a few days, consider seeing a doctor
-- If you develop severe symptoms, chest pain, difficulty breathing, or other concerning signs, seek immediate medical care
-
-Would you like to schedule an appointment with a healthcare provider to discuss your concerns?`;
-        needsHumanFallback = false;
-        urgencyLevel = "no";
-      }
+This guidance is not a diagnosis and doesn’t replace a doctor.`;
 
       return NextResponse.json(
         {
           answer: fallbackAnswer,
           aiError: true,
-          needsHuman: needsHumanFallback,
-          urgency: urgencyLevel,
+          needsHuman: true,
+          urgency: "urgent",
         },
         { status: 200 }
       );
     }
-
 
     // Extract machine-readable HUMAN_NEEDED flag and clean answer
     let needsHuman = false;

@@ -29,12 +29,6 @@ export default function RootLayout({ children }) {
             <Header />
             <main>{children}</main>
             <Toaster richColors />
-
-            <footer className="bg-muted/50 py-11 mt-[-20]">
-              <div className="container mx-auto px-4 text-center text-gray-200 text-[15px]">
-                <p>Developed by 🥼 Sadiya Maheen Siddiqui</p>
-              </div>
-            </footer>
           </ThemeProvider>
         </ConditionalClerkProvider>
       </body>
