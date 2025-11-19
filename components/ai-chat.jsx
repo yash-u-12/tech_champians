@@ -424,10 +424,7 @@ function SidebarContent({
         {sidebarOpen && (
           <div className="flex items-center space-x-2">
             <h3 className="font-semibold text-white px-2">Chat History</h3>
-            <div className="text-sm text-emerald-400 flex items-center">
-              <CreditCard className="h-4 w-4 mr-1" />
-              {userCredits}
-            </div>
+            
           </div>
         )}
         

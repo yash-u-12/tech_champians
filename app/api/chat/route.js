@@ -118,10 +118,7 @@ export async function POST(req) {
     - Set to "no" for mild, self-limiting conditions that can be managed at home (e.g., mild headache, minor cold, mild indigestion, mild muscle soreness, mild seasonal allergies).
     - Set to "yes" ONLY when medical intervention is truly needed: severe pain not responding to OTC meds, symptoms lasting more than 7 days without improvement, fever >102°F (39°C) persisting >3 days, significant breathing difficulty, chest pain, severe abdominal pain, signs of infection requiring antibiotics, chronic disease complications, pregnancy complications, or when physical examination/tests are clearly necessary.
     - Set to "urgent" only for immediate/life-threatening emergencies: sudden severe headache (worst ever), chest pain with shortness of breath, stroke symptoms (facial drooping, arm weakness, speech difficulty), severe bleeding, difficulty breathing, loss of consciousness, seizures, severe allergic reaction.
-
-    User Details:
-    ${JSON.stringify(userDetails, null, 2)}
-
+    
     User:
     ${message}
     
