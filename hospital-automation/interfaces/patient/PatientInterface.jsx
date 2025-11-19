@@ -363,7 +363,7 @@ export default function PatientInterface({ userId, defaultName = '', defaultReas
                         <Activity className="h-5 w-5 mr-2 text-green-600" />
                         Current Visit
                       </h3>
-                      <Card className="border-2 border-green-500/20 bg-green-50/50">
+                      <Card className="border-2 border-blue-500/20 ">
                         <CardContent className="p-4">
                           <div className="flex justify-between items-start mb-3">
                             <div>
